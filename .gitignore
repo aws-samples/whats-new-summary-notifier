@@ -1,0 +1,18 @@
+*.js
+!jest.config.js
+*.d.ts
+node_modules
+
+# AWS CDK
+cdk.out/
+.cdk.staging
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# virtual env
+venv/
+ENV/

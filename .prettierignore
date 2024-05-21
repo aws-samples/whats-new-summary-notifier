@@ -1,0 +1,15 @@
+**/*.json
+**/*.md
+**/*.txt
+**/node_modules
+**/dist
+**/*.py
+**/*.yml
+
+.gitignore
+.npmignore
+.prettierignore
+
+doc
+
+LICENSE
