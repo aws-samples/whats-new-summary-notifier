@@ -45,6 +45,7 @@ def get_blog_content(url):
                     if main:
                         return main.text
                     else:
+                        print(f"Error parsing {url}, there is no <main> tag in the article")
                         return None
 
         else:
@@ -227,6 +228,9 @@ def push_notification(item_list):
 
         # Get the blog context
         content = get_blog_content(item_url)
+        if content is None:
+            print(f"skip {item_url}: no content is retrieved")
+            continue
 
         # Summarize the blog
         summarizer = SUMMARIZERS[notifier["summarizerName"]]
