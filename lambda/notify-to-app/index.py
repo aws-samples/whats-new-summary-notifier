@@ -20,6 +20,10 @@ MODEL_REGION = os.environ["MODEL_REGION"]
 NOTIFIERS = json.loads(os.environ["NOTIFIERS"])
 SUMMARIZERS = json.loads(os.environ["SUMMARIZERS"])
 
+boto3_bedrock = get_bedrock_client(
+    assumed_role=os.environ.get("BEDROCK_ASSUME_ROLE", None),
+    region=MODEL_REGION,
+)
 ssm = boto3.client("ssm")
 
 
@@ -136,10 +140,6 @@ def summarize_blog(
         str: The summarized text
     """
 
-    boto3_bedrock = get_bedrock_client(
-        assumed_role=os.environ.get("BEDROCK_ASSUME_ROLE", None),
-        region=MODEL_REGION,
-    )
     beginning_word = "<output>"
     prompt_data = f"""
 <input>{blog_body}</input>
@@ -208,6 +208,69 @@ Follow the instruction.
     return summary, detail
 
 
+def filter_blog(content: str, filter: str) -> bool:
+    system = [{
+        "text": "You are a professional editor. Please judge if the content in <content></content> XML tag input by user, contains the either topic in <topic></topic> XML tag input by user."
+        }]
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "text": f" <topic>{filter}</topic>\n<content>{content}</content>",
+                }
+            ],
+        }
+            ]
+    inference_config = {
+        "temperature": 0,
+        "maxTokens": 1024,
+        "topP": 0.9
+    }
+    tool_config = {
+        "tools": [
+            {
+                "toolSpec": {
+                    "name": "content_topic_relevance_checker",
+                    "description": "A tool to judge the relevance between content and topic in boolean value",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "filter_result": {
+                                "type": "boolean",
+                                "description": "True if the content is relevant to the topic, false otherwise"
+                            },
+                            "confidence": {
+                            "type": "number",
+                            "description": "Output 1.0 if the confidence in the result is high, 0.0 if the confidence is low, regardless of whether the result is True or False"
+                        }
+                        },
+                        "required": ["filter_result", "confidence"]
+                    }
+                },
+                    }
+                }
+        ],
+        "toolChoice": {
+            "tool": {
+                "name": "content_topic_relevance_checker"
+            }
+        }
+    }
+    response = boto3_bedrock.converse(
+        modelId=MODEL_ID,
+        messages=messages,
+        inferenceConfig=inference_config,
+        system=system,
+        toolConfig=tool_config
+    )
+    print(response['output']['message']['content'])
+    filter_result = response['output']['message']['content'][0]['toolUse']['input']['filter_result']
+    filter_result_bool = filter_result.lower() == 'true'
+
+    return filter_result_bool
+
 def push_notification(item_list):
     """Notify the arrival of articles
 
@@ -222,11 +285,17 @@ def push_notification(item_list):
         destination = notifier["destination"]
         ssm_response = ssm.get_parameter(Name=webhook_url_parameter_name, WithDecryption=True)
         app_webhook_url = ssm_response["Parameter"]["Value"]
+        filter = notifier.get("filter")
         
         item_url = item["rss_link"]
 
         # Get the blog context
         content = get_blog_content(item_url)
+        
+        # Content Filter
+        if filter is not None:
+            if not filter_blog(content, filter["topic"]):
+                continue
 
         # Summarize the blog
         summarizer = SUMMARIZERS[notifier["summarizerName"]]
