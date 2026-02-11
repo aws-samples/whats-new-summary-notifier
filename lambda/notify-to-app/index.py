@@ -185,6 +185,11 @@ Follow the instructions carefully and focus on technical accuracy and practical 
     elif summarizer_name == "Formula1ProfessionalJapanese":
         prompt_data = f"""
 <persona>You are a professional {persona} with extensive knowledge of F1 racing, teams, drivers, regulations, and the motorsport industry. </persona>
+
+<glossary_compliance_priority>
+CRITICAL - READ FIRST: When your output language is Japanese, every proper noun (driver names, team names, officials) and every technical term listed in <glossary> MUST appear in your <summary> and <twitter> ONLY in the exact Japanese form given in the glossary. Using the English form or any other Japanese spelling in the final output is forbidden. This rule overrides any other preference; follow the glossary exactly.
+</glossary_compliance_priority>
+
 <instruction>
 Analyze the Formula 1 news in <input></input> tags and provide comprehensive insights covering:
 - What is the main F1-related development or news story being reported
@@ -193,7 +198,7 @@ Analyze the Formula 1 news in <input></input> tags and provide comprehensive ins
 - What are the technical, regulatory, or strategic implications
 - Why this news matters to F1 fans, teams, or the sport overall
 
-IMPORTANT: When writing in Japanese, you MUST use the exact translations provided in the glossary section below for all names, teams, and technical terms. This is mandatory and non-negotiable.
+When writing in Japanese: Use ONLY the Japanese translations from the <glossary> for names, teams, and technical terms. Do NOT use English names in <summary> or <twitter>. Do NOT invent your own katakana; use the glossary form exactly.
 
 Output your analysis in <thinking></thinking> tags using bullet points (each starting with "- " and ending with "\n").
 Create an engaging summary following <summaryRule></summaryRule> and format according to <outputFormat></outputFormat>.
@@ -264,10 +269,10 @@ When translating to Japanese, you are REQUIRED to use the following proper nouns
 - Parc Fermé: パルクフェルメ
 </technical_terms>
 
-CRITICAL: If any of these terms appear in the content, you MUST use the exact Japanese translation provided above. Using any other translation is strictly forbidden and will be considered an error.
+CRITICAL: If any of these terms appear in the content or in your reasoning, you MUST use the exact Japanese translation provided above in your <summary> and <twitter>. Do NOT output the English form. Do NOT use a different katakana spelling. Using any other translation is strictly forbidden.
 </glossary>
 <outputLanguage>In {language}.</outputLanguage>
-<summaryRule>The final summary must be 2-3 sentences that capture the significance of the F1 news, explaining what happened and why it matters to fans in a professional tone.</summaryRule>
+<summaryRule>The final summary must be 2-3 sentences that capture the significance of the F1 news, explaining what happened and why it matters to fans in a professional tone. When writing in Japanese: use ONLY the Japanese forms from the glossary for all driver names, team names, and technical terms—no English names in the summary.</summaryRule>
 <twitterRules>
 STRICT RULES for Twitter summary:
 - NEVER use exclamation marks or show excessive excitement
@@ -277,11 +282,11 @@ STRICT RULES for Twitter summary:
 - Use neutral, informative tone
 - Focus on factual information only
 - Avoid emotional language or superlatives
+- When writing in Japanese: use ONLY glossary Japanese for names, teams, and terms—no English in the tweet
 </twitterRules>
-<outputFormat><thinking>(detailed bullet point analysis of the F1 news)</thinking><summary>(professional summary that captures the significance of the F1 news)</summary><twitter>(Twitter-ready summary within 200 characters following twitterRules strictly)</twitter></outputFormat>
-Follow the instructions carefully and maintain professionalism while providing accurate information. 
+<outputFormat><thinking>(detailed bullet point analysis of the F1 news)</thinking><summary>(professional summary; if Japanese, all proper nouns and technical terms MUST use the exact forms from the glossary)</summary><twitter>(Twitter-ready summary within 200 characters; if Japanese, all names/teams/terms MUST be in glossary Japanese only)</twitter></outputFormat>
 
-MANDATORY GLOSSARY COMPLIANCE: When outputting in Japanese, you MUST strictly adhere to the proper noun translations provided in the glossary above. Any deviation from these translations is strictly prohibited. Before finalizing your output, verify that all names, teams, and technical terms use the exact Japanese translations specified in the glossary.
+FINAL CHECK before you output: When output language is Japanese, scan your <summary> and <twitter> for any English proper nouns (e.g. "Verstappen", "Ferrari", "Mercedes") or technical terms (e.g. "Qualifying", "Safety Car"). If found, replace them with the exact Japanese form from the glossary. Your response is only correct when every such term appears in the glossary form.
 """
 
     max_tokens = 4096
@@ -329,8 +334,8 @@ MANDATORY GLOSSARY COMPLIANCE: When outputting in Japanese, you MUST strictly ad
     ## Use Strands API
     model = BedrockModel(
         params={
-            "temperature": 1.0,
-            "top_p": 1.0,
+            "temperature": 0.1,
+            "top_p": 0.1,
             "max_completion_tokens": max_tokens
         },
         additional_request_fields={
