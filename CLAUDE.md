@@ -15,6 +15,8 @@ cdk bootstrap   # run once per account/region
 cdk deploy
 ```
 
+**Prerequisites:** Docker (required for Lambda build via `aws-lambda-python-alpha`). See [README.md](README.md) for full prerequisites.
+
 ## Architecture
 
 The application consists of:
@@ -70,16 +72,18 @@ The application is configured via the `context` section in `cdk.json`:
 ### Notification Handler (`lambda/notify-to-app/index.py`)
 - Triggered by DynamoDB streams on new RSS entries
 - Scrapes full article content using cloudscraper and BeautifulSoup
-- Summarizes content using Bedrock's Converse API
+- Summarizes content using Strands Agent SDK with Bedrock
 - Posts formatted messages to Slack with Twitter sharing links
 
 ## Gotchas
 
 - Prerequisites, deployment steps, and common pitfalls: see [README.md](README.md).
+- **Docker** must be running before `cdk deploy` (Lambda build).
+- **Bedrock** model access must be enabled in the region set in `modelRegion` (cdk.json).
 
 ## Development Notes
 
-- Python Lambda functions use Python 3.11 runtime
+- Python Lambda functions use Python 3.12 runtime
 - CDK stack uses TypeScript with AWS CDK v2
 - Web scraping handles Cloudflare protection using cloudscraper
 - Bedrock summarization includes structured output with thinking/summary/twitter sections
