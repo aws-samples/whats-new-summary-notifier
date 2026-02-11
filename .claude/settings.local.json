@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(aws:*)",
+      "Bash(npm outdated)",
+      "Bash(npm install)",
+      "Bash(npm run build:*)",
+      "Bash(npm view:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

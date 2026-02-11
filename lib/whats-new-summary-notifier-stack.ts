@@ -1,5 +1,5 @@
 import { Construct } from 'constructs';
-import { Stack, StackProps, Duration } from 'aws-cdk-lib';
+import { Stack, StackProps, Duration, RemovalPolicy } from 'aws-cdk-lib';
 import { Table, AttributeType, BillingMode, StreamViewType } from 'aws-cdk-lib/aws-dynamodb';
 import { Rule, Schedule, RuleTargetInput, CronOptions } from 'aws-cdk-lib/aws-events';
 import { LambdaFunction } from 'aws-cdk-lib/aws-events-targets';
@@ -7,7 +7,7 @@ import { Role, Policy, ServicePrincipal, PolicyStatement, Effect } from 'aws-cdk
 import { Runtime, StartingPosition } from 'aws-cdk-lib/aws-lambda';
 import { DynamoEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { PythonFunction } from '@aws-cdk/aws-lambda-python-alpha';
-import { RetentionDays } from 'aws-cdk-lib/aws-logs';
+import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { StringParameter } from 'aws-cdk-lib/aws-ssm';
 import * as path from 'path';
 
@@ -70,13 +70,19 @@ export class WhatsNewSummaryNotifierStack extends Stack {
     });
 
     // Lambda Function to post new entries written to DynamoDB to Slack
+    const notifyNewEntryLogGroup = new LogGroup(this, 'NotifyNewEntryLogGroup', {
+      logGroupName: '/aws/lambda/NotifyNewEntry',
+      retention: RetentionDays.TWO_WEEKS,
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+
     const notifyNewEntry = new PythonFunction(this, 'NotifyNewEntry', {
-      runtime: Runtime.PYTHON_3_11,
+      runtime: Runtime.PYTHON_3_12,
       entry: path.join(__dirname, '../lambda/notify-to-app'),
       handler: 'handler',
       index: 'index.py',
       timeout: Duration.seconds(180),
-      logRetention: RetentionDays.TWO_WEEKS,
+      logGroup: notifyNewEntryLogGroup,
       role: notifyNewEntryRole,
       reservedConcurrentExecutions: 1,
       environment: {
@@ -98,13 +104,19 @@ export class WhatsNewSummaryNotifierStack extends Stack {
     rssHistoryTable.grantWriteData(newsCrawlerRole);
 
     // Lambda Function to fetch RSS and write to DynamoDB
+    const newsCrawlerLogGroup = new LogGroup(this, 'NewsCrawlerLogGroup', {
+      logGroupName: '/aws/lambda/newsCrawler',
+      retention: RetentionDays.TWO_WEEKS,
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+
     const newsCrawler = new PythonFunction(this, `newsCrawler`, {
-      runtime: Runtime.PYTHON_3_11,
+      runtime: Runtime.PYTHON_3_12,
       entry: path.join(__dirname, '../lambda/rss-crawler'),
       handler: 'handler',
       index: 'index.py',
       timeout: Duration.seconds(60),
-      logRetention: RetentionDays.TWO_WEEKS,
+      logGroup: newsCrawlerLogGroup,
       role: newsCrawlerRole,
       environment: {
         DDB_TABLE_NAME: rssHistoryTable.tableName,

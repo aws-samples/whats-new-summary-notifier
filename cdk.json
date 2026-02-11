@@ -41,10 +41,7 @@
                 "webhookUrlParameterName": "/WhatsNew/URL",
                 "rssUrl": {
                     "What's new": "https://aws.amazon.com/about-aws/whats-new/recent/feed/",
-                    "AWS News Blog": "https://aws.amazon.com/blogs/aws/feed",
-                    "AWS News Security Blog": "https://aws.amazon.com/blogs/security/feed/",
                     "AWS News Machine Learning Blog": "https://aws.amazon.com/blogs/machine-learning/feed/",
-                    "AWS Web Services Blog (JP)": "https://aws.amazon.com/jp/blogs/news/feed/",
                     "AWS Web Services Blog (JP) - Generative AI": "https://aws.amazon.com/jp/blogs/news/category/artificial-intelligence/generative-ai/feed/",
                     "AWS Web Services Blog - Generative AI": "https://aws.amazon.com/blogs/aws/category/artificial-intelligence/generative-ai/feed/",
                     "AWS Web Services Blog (JP) - Generative AI 2": "https://aws.amazon.com/jp/blogs/news/category/generative-ai-2/feed/"
