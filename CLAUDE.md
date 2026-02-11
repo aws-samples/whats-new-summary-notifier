@@ -6,6 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is an AWS CDK application that implements a Whats New Summary Notifier - a generative AI application that monitors RSS feeds (primarily AWS What's New and other tech blogs), summarizes content using Amazon Bedrock, and delivers notifications to Slack.
 
+## Quick Start
+
+```bash
+npm install
+npm run build
+cdk bootstrap   # run once per account/region
+cdk deploy
+```
+
 ## Architecture
 
 The application consists of:
@@ -14,6 +23,11 @@ The application consists of:
 - **DynamoDB Table**: Stores RSS history to avoid duplicate processing
 - **EventBridge Rules**: Schedules RSS crawling based on configured cron expressions
 - **SSM Parameter Store**: Securely stores Slack webhook URLs
+
+## Key Files
+
+- `bin/whats-new-summary-notifier.ts` - CDK app entry point
+- `lib/whats-new-summary-notifier-stack.ts` - Stack definition (DynamoDB, Lambdas, EventBridge, SSM)
 
 ## Build and Development Commands
 
@@ -29,14 +43,14 @@ The application consists of:
 - `npm test` - Run Jest tests
 - `ruff check` - Lint Python code in Lambda functions
 - `ruff format` - Format Python code in Lambda functions
-- `npm run lint` - Run ESLint on TypeScript code (uses eslint.config.mjs)
+- `npx eslint .` - Run ESLint on TypeScript code (uses eslint.config.mjs)
 
 ## Configuration
 
 The application is configured via the `context` section in `cdk.json`:
 
 - **modelRegion**: AWS region for Bedrock (currently us-west-2)
-- **modelId**: Bedrock model ID (currently openai.gpt-oss-20b-1:0)
+- **modelId**: Bedrock model ID (currently openai.gpt-oss-120b-1:0)
 - **summarizers**: Define different AI personas and output languages
 - **notifiers**: Configure RSS sources, schedules, and Slack webhook parameters
 
@@ -58,6 +72,10 @@ The application is configured via the `context` section in `cdk.json`:
 - Scrapes full article content using cloudscraper and BeautifulSoup
 - Summarizes content using Bedrock's Converse API
 - Posts formatted messages to Slack with Twitter sharing links
+
+## Gotchas
+
+- Prerequisites, deployment steps, and common pitfalls: see [README.md](README.md).
 
 ## Development Notes
 
