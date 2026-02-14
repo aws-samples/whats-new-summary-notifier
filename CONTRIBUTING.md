@@ -50,6 +50,27 @@ For more information see the [Code of Conduct FAQ](https://aws.github.io/code-of
 opensource-codeofconduct@amazon.com with any additional questions or comments.
 
 
+## Updating dependencies
+
+To keep dependencies secure and up to date:
+
+**npm (CDK / TypeScript)**
+
+1. Run `npm audit` to check for known vulnerabilities.
+2. Run `npm audit fix` to apply non-breaking fixes.
+3. Run `npm update` (or `npm run deps:update` to update, build, and test).
+4. Re-run `npm audit` and fix any remaining issues. Commit `package.json` and `package-lock.json`.
+
+**Python (Lambda)**
+
+1. In each of `lambda/notify-to-app` and `lambda/rss-crawler`, install and audit:
+   - `pip install -r requirements.txt`
+   - `pip-audit -r requirements.txt` (or `pip-audit` in an environment with those packages installed).
+2. Update `requirements.txt` with version pins (e.g. `package>=x.y.z`) for direct dependencies. Re-run `pip-audit` after changes.
+3. Verify the stack with `cdk synth` (requires Docker).
+
+Direct dependencies in `requirements.txt` use version pins for reproducibility and security.
+
 ## Security issue notifications
 If you discover a potential security issue in this project we ask that you notify AWS/Amazon Security via our [vulnerability reporting page](http://aws.amazon.com/security/vulnerability-reporting/). Please do **not** create a public github issue.
 

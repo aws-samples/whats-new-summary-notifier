@@ -42,7 +42,7 @@ The project uses the following key dependencies:
 
 ### Dependency Resolution
 
-The project uses automatic dependency resolution to handle complex package dependencies. The `requirements.txt` files are configured to allow the dependency resolver to find compatible versions of all required packages automatically.
+The project pins direct dependencies in `requirements.txt` (e.g. `package>=x.y.z`) for reproducibility and security. Transitive dependencies are resolved by pip. For audit and update steps, see [CONTRIBUTING.md](CONTRIBUTING.md#updating-dependencies).
 
 - An environment where you can execute Unix commands (Mac, Linux, ...)
   - If you don't have such an environment, you can also use AWS Cloud9. Please refer to [Preparing the Operating Environment (AWS Cloud9)](DEPLOY.md).
@@ -88,6 +88,10 @@ aws ssm put-parameter \
 This asset is set up to output summaries in Japanese (日本語) by default. If you want to generate output in other languages such as English, open the `cdk.json` file and change the `summarizerName` value inside the `notifiers` object within the `context` section from `AwsSolutionsArchitectJapanese` to `AwsSolutionsArchitectEnglish` or another language. For more information on other configuration options, please refer to the [Deployment Guide](DEPLOY.md). For more information on other configuration options, please refer to the [Deployment Guide](DEPLOY.md).
 
 ### Execute the deployment
+
+**Deploy region**
+
+The deploy target region is read from `CDK_DEFAULT_REGION`. Copy `.env.example` to `.env` and set the region (e.g. `CDK_DEFAULT_REGION=us-east-1`). If unset, the stack defaults to `us-east-1`.
 
 **Initialize**
 

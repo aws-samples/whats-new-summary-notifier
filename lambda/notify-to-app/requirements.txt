@@ -1,5 +1,7 @@
-beautifulsoup4
-boto3
-cloudscraper
-strands-agents
-strands-agents-builder
+# Direct dependencies with version pins for reproducibility and security.
+# Run: pip install -r requirements.txt && pip-audit -r requirements.txt
+beautifulsoup4>=4.14.3
+boto3>=1.42.46,<2
+cloudscraper>=1.2.71
+strands-agents>=1.25.0
+strands-agents-builder>=0.1.10

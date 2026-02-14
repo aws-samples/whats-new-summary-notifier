@@ -1,0 +1,49 @@
+# Run dependency audits on push to main and on pull requests.
+# Fails if npm audit or pip-audit report known vulnerabilities.
+name: Dependency audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: npm audit
+        run: npm audit --audit-level=moderate
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: pip-audit (notify-to-app)
+        run: |
+          python -m venv .venv-notify
+          .venv-notify/bin/pip install -r lambda/notify-to-app/requirements.txt -q
+          .venv-notify/bin/pip install pip-audit -q
+          .venv-notify/bin/pip-audit
+
+      - name: pip-audit (rss-crawler)
+        run: |
+          python -m venv .venv-rss
+          .venv-rss/bin/pip install -r lambda/rss-crawler/requirements.txt -q
+          .venv-rss/bin/pip install pip-audit -q
+          .venv-rss/bin/pip-audit

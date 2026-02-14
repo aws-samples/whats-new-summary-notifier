@@ -6,6 +6,7 @@ node_modules
 # AWS CDK
 cdk.out/
 .cdk.staging
+.env
 .DS_Store
 
 # Python
@@ -15,6 +16,7 @@ __pycache__/
 
 # virtual env
 venv/
+.venv-audit/
 ENV/
 
 # VS Code

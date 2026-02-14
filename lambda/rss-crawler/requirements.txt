@@ -1,2 +1,4 @@
-feedparser
-python-dateutil
+# Direct dependencies with version pins for reproducibility and security.
+# Run: pip install -r requirements.txt && pip-audit -r requirements.txt
+feedparser>=6.0.12
+python-dateutil>=2.9.0

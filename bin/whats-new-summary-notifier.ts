@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import 'dotenv/config';
 import 'source-map-support/register';
 import * as cdk from 'aws-cdk-lib';
 import { WhatsNewSummaryNotifierStack } from '../lib/whats-new-summary-notifier-stack';
@@ -7,7 +8,7 @@ const app = new cdk.App();
 new WhatsNewSummaryNotifierStack(app, 'WhatsNewSummaryNotifierStack', {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION,
+    region: process.env.CDK_DEFAULT_REGION ?? 'us-east-1',
   },
   /* If you don't specify 'env', this stack will be environment-agnostic.
    * Account/Region-dependent features and context lookups will not work,

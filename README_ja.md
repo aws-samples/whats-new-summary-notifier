@@ -38,7 +38,7 @@
 
 ### 依存関係解決
 
-このプロジェクトでは、複雑なパッケージ依存関係を処理するために自動依存関係解決を使用しています。`requirements.txt`ファイルは、依存関係リゾルバーが必要なすべてのパッケージの互換バージョンを自動的に見つけることができるように設定されています。
+このプロジェクトでは、再現性とセキュリティのため `requirements.txt` で直接依存にバージョンを指定しています（例: `package>=x.y.z`）。推移依存は pip が解決します。監査・更新手順は [CONTRIBUTING.md](CONTRIBUTING.md#updating-dependencies) を参照してください。
 
 ## 前提条件
 
@@ -122,6 +122,10 @@ cdk synth
 ```bash
 cdk synth --profile your-profile-name
 ```
+
+**デプロイ先リージョン**
+
+デプロイ先リージョンは `CDK_DEFAULT_REGION` で指定します。`.env.example` を `.env` にコピーし、リージョン（例: `CDK_DEFAULT_REGION=us-east-1`）を設定してください。未設定の場合は `us-east-1` が使われます。
 
 **デプロイの実行**
 

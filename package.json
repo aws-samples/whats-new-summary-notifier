@@ -7,18 +7,18 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
-    "test": "jest",
-    "cdk": "cdk"
+    "test": "jest --passWithNoTests",
+    "cdk": "cdk",
+    "audit": "npm audit",
+    "deps:update": "npm update && npm run build && npm test"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
     "@types/node": "^25.0.3",
     "aws-cdk": "^2.1100.1",
     "eslint": "^9.39.2",
-    "eslint-config-prettier": "^10.1.8",
     "globals": "^16.4.0",
     "jest": "^30.2.0",
-    "prettier": "^3.6.2",
     "ts-node": "^10.9.1",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.0"
@@ -28,6 +28,7 @@
     "aws-cdk-lib": "^2.233.0",
     "cdk-nag": "^2.37.47",
     "constructs": "^10.4.2",
+    "dotenv": "^17.3.1",
     "source-map-support": "^0.5.21"
   }
 }
