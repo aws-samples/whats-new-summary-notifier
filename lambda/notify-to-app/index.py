@@ -8,11 +8,9 @@ import time
 import traceback
 import urllib.parse
 import urllib.request
-from typing import Optional
 
 import boto3
 import cloudscraper
-from botocore.config import Config
 from botocore.exceptions import ClientError
 from bs4 import BeautifulSoup
 from strands import Agent
@@ -62,72 +60,6 @@ def get_blog_content(url):
         return None
 
 
-
-def get_bedrock_client(
-    assumed_role: Optional[str] = None,
-    region: Optional[str] = None,
-    runtime: Optional[bool] = True,
-):
-    """Create a boto3 client for Amazon Bedrock, with optional configuration overrides
-
-    Args:
-        assumed_role (Optional[str]): Optional ARN of an AWS IAM role to assume for calling the Bedrock service. If not
-            specified, the current active credentials will be used.
-        region (Optional[str]): Optional name of the AWS Region in which the service should be called (e.g. "us-east-1").
-            If not specified, AWS_REGION or AWS_DEFAULT_REGION environment variable will be used.
-        runtime (Optional[bool]): Optional choice of getting different client to perform operations with the Amazon Bedrock service.
-    """
-
-    if region is None:
-        target_region = os.environ.get(
-            "AWS_REGION", os.environ.get("AWS_DEFAULT_REGION")
-        )
-    else:
-        target_region = region
-
-    print(f"Create new client\n  Using region: {target_region}")
-    session_kwargs = {"region_name": target_region}
-    client_kwargs = {**session_kwargs}
-
-    profile_name = os.environ.get("AWS_PROFILE")
-    if profile_name:
-        print(f"  Using profile: {profile_name}")
-        session_kwargs["profile_name"] = profile_name
-
-    retry_config = Config(
-        region_name=target_region,
-        retries={
-            "max_attempts": 10,
-            "mode": "standard",
-        },
-    )
-    session = boto3.Session(**session_kwargs)
-
-    if assumed_role:
-        print(f"  Using role: {assumed_role}", end="")
-        sts = session.client("sts")
-        response = sts.assume_role(
-            RoleArn=str(assumed_role), RoleSessionName="langchain-llm-1"
-        )
-        print(" ... successful!")
-        client_kwargs["aws_access_key_id"] = response["Credentials"]["AccessKeyId"]
-        client_kwargs["aws_secret_access_key"] = response["Credentials"][
-            "SecretAccessKey"
-        ]
-        client_kwargs["aws_session_token"] = response["Credentials"]["SessionToken"]
-
-    if runtime:
-        service_name = "bedrock-runtime"
-    else:
-        service_name = "bedrock"
-
-    bedrock_client = session.client(
-        service_name=service_name, config=retry_config, **client_kwargs
-    )
-
-    return bedrock_client
-
-
 def summarize_blog(
     blog_body,
     language,
@@ -146,10 +78,6 @@ def summarize_blog(
     """
 
     print(f"Summarizing blog with summarizer: {summarizer_name}")
-    boto3_bedrock = get_bedrock_client(
-        assumed_role=os.environ.get("BEDROCK_ASSUME_ROLE", None),
-        region=MODEL_REGION,
-    )
 
     if summarizer_name == "AwsSolutionsArchitectJapanese":
         prompt_data = f"""
@@ -294,47 +222,6 @@ FINAL CHECK before you output: When output language is Japanese, scan your <summ
 
     max_tokens = 4096
 
-    ## Use Bedrock API
-    # system_prompts = [
-    #     {
-    #         "text": prompt_data
-    #     }
-    # ]
-
-    # messages = [
-    #     {
-    #         "role": "user",
-    #         "content": [
-    #             {
-    #                 "text": f"<input>{blog_body}</input>"
-    #             }
-    #         ]
-    #     }
-    # ]
-
-    # inference_config = {
-    #     "maxTokens": max_tokens,
-    #     "temperature": 0.5,
-    #     "topP": 1,
-    # }
-
-    # additional_model_request_fields = {
-    #     "inferenceConfig": {
-    #         "topK": 250
-    #     }
-    # }
-    # try:
-    #     response = boto3_bedrock.converse(
-    #         system=system_prompts,
-    #         messages=messages,
-    #         modelId=MODEL_ID,
-    #         inferenceConfig=inference_config,
-    #         additionalModelRequestFields=additional_model_request_fields
-    #     )
-
-    #    outputText = response["output"]["message"]["content"][0]["text"]
-
-    ## Use Strands API
     model = BedrockModel(
         params={
             "temperature": 0.1,
@@ -365,10 +252,17 @@ FINAL CHECK before you output: When output language is Japanese, scan your <summ
 
         if outputText is None:
             raise ValueError("No text content found in response")
-        # extract contant inside <summary> tag
-        summary = re.findall(r"<summary>([\s\S]*?)</summary>", outputText)[0]
-        detail = re.findall(r"<thinking>([\s\S]*?)</thinking>", outputText)[0]
-        twitter = re.findall(r"<twitter>([\s\S]*?)</twitter>", outputText)[0]
+
+        summary_matches = re.findall(r"<summary>([\s\S]*?)</summary>", outputText)
+        detail_matches = re.findall(r"<thinking>([\s\S]*?)</thinking>", outputText)
+        twitter_matches = re.findall(r"<twitter>([\s\S]*?)</twitter>", outputText)
+
+        if not summary_matches or not detail_matches or not twitter_matches:
+            raise ValueError(f"Response missing required XML tags: {outputText[:300]}")
+
+        summary = summary_matches[0]
+        detail = detail_matches[0]
+        twitter = twitter_matches[0]
     except ClientError as error:
         if error.response["Error"]["Code"] == "AccessDeniedException":
             print(
@@ -377,6 +271,7 @@ FINAL CHECK before you output: When output language is Japanese, scan your <summ
                 "https://docs.aws.amazon.com/IAM/latest/UserGuide/troubleshoot_access-denied.html\n"
                 "https://docs.aws.amazon.com/bedrock/latest/userguide/security-iam.html\n"
             )
+            raise
         else:
             raise error
 
@@ -401,6 +296,9 @@ def push_notification(item_list):
 
         # Get the blog context
         content = get_blog_content(item_url)
+        if content is None:
+            print(f"Content unavailable for {item_url}. Falling back to title only.")
+            content = item["rss_title"]
 
         # Summarize the blog
         summarizer = SUMMARIZERS[notifier["summarizerName"]]
@@ -481,4 +379,4 @@ def handler(event, context):
         if 0 < len(new_data):
             push_notification(new_data)
     except Exception:
-        print(traceback.print_exc())
+        traceback.print_exc()
