@@ -237,6 +237,7 @@ When translating to Japanese, you are REQUIRED to use the following proper nouns
 - Toto Wolff: トト・ウォルフ
 - Frédéric Vasseur: フレデリック・バスール
 - Ayao Komatsu: 小松礼雄
+- Shintaro Orihara: 折原伸太郎
 </names>
 
 <teams>
@@ -251,6 +252,7 @@ When translating to Japanese, you are REQUIRED to use the following proper nouns
 - Alfa Romeo: アルファロメオ
 - Racing Bulls: レーシング・ブルズ
 - KICK Sauber: キックザウバー
+- Cadillac: キャデラック
 </teams>
 
 <technical_terms>
@@ -267,6 +269,7 @@ When translating to Japanese, you are REQUIRED to use the following proper nouns
 - Ground Effect: グラウンドエフェクト
 - Porpoising: ポーポイジング
 - Parc Fermé: パルクフェルメ
+- Degrees of rake: 傾斜度
 </technical_terms>
 
 CRITICAL: If any of these terms appear in the content or in your reasoning, you MUST use the exact Japanese translation provided above in your <summary> and <twitter>. Do NOT output the English form. Do NOT use a different katakana spelling. Using any other translation is strictly forbidden.
