@@ -46,6 +46,8 @@ The application consists of:
 - `ruff check` - Lint Python code in Lambda functions
 - `ruff format` - Format Python code in Lambda functions
 - `npx eslint .` - Run ESLint on TypeScript code (uses eslint.config.mjs)
+- `npm run audit` - Run npm security audit on dependencies
+- `npm run deps:update` - Update dependencies, then build and test
 
 ## Configuration
 
@@ -66,25 +68,31 @@ The application is configured via the `context` section in `cdk.json`:
 
 ### RSS Crawler (`lambda/rss-crawler/index.py`)
 - Fetches RSS feeds using feedparser
-- Filters entries published within the last 7 days
+- Filters entries to only those published within the last 7 days (hardcoded)
 - Stores new entries in DynamoDB with deduplication
+- DynamoDB key: `url` (partition) + `notifier_name` (sort) — natural dedup without explicit checks
 
 ### Notification Handler (`lambda/notify-to-app/index.py`)
-- Triggered by DynamoDB streams on new RSS entries
-- Scrapes full article content using cloudscraper and BeautifulSoup
-- Summarizes content using Strands Agent SDK with Bedrock
+
+- Triggered by DynamoDB streams on new RSS entries (batchSize=1, StreamViewType=NEW_IMAGE)
+- Scrapes full article content using cloudscraper and BeautifulSoup (targets `<main>` tag)
+- Summarizes content using Strands Agents SDK (`strands-agents` library) with Bedrock — temperature=0.1, reasoning_effort="medium"
 - Posts formatted messages to Slack with Twitter sharing links
+- F1 notifier has a strict Japanese glossary for driver/team names — edit carefully
 
 ## Gotchas
 
 - Prerequisites, deployment steps, and common pitfalls: see [README.md](README.md).
 - **Docker** must be running before `cdk deploy` (Lambda build).
 - **Bedrock** model access must be enabled in the region set in `modelRegion` (cdk.json).
+- **F1 Glossary**: The Formula 1 notifier enforces a strict glossary for Japanese translations of driver names, team names, and technical terms (defined in `lambda/notify-to-app/index.py`). Always preserve these mappings when editing prompts.
+- **cdk-nag**: `bin/cdk_test.ts` runs AwsSolutionsChecks on synth. CDK nag suppressions are required for any intentional deviations from AWS security best practices.
 
 ## Development Notes
 
 - Python Lambda functions use Python 3.12 runtime
 - CDK stack uses TypeScript with AWS CDK v2
+- Tool versions are managed via `mise` (see `mise.toml`) — install with `mise install`
 - Web scraping handles Cloudflare protection using cloudscraper
 - Bedrock summarization includes structured output with thinking/summary/twitter sections
 - Lambda concurrency is limited to 1 for the notification function to prevent rate limiting
