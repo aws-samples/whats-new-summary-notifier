@@ -39,7 +39,10 @@ export class WhatsNewSummaryNotifierStack extends Stack {
           new PolicyStatement({
             actions: ['bedrock:InvokeModel'],
             effect: Effect.ALLOW,
-            resources: ['*'],
+            resources: [
+              `arn:aws:bedrock:${modelRegion}::foundation-model/${modelId}`,
+              `arn:aws:bedrock:${modelRegion}:${accountId}:inference-profile/*`,
+            ],
           }),
         ],
       })

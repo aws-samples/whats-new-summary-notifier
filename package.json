@@ -13,15 +13,18 @@
     "deps:update": "npm update && npm run build && npm test"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.2",
+    "@eslint/js": "^10.0.0",
     "@types/node": "^25.0.3",
     "aws-cdk": "^2.1100.1",
-    "eslint": "^9.39.2",
+    "eslint": "^10.0.0",
     "globals": "^16.4.0",
     "jest": "^30.2.0",
     "ts-node": "^10.9.1",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.46.0"
+    "typescript-eslint": "^8.56.0"
+  },
+  "overrides": {
+    "minimatch": ">=10.2.1"
   },
   "dependencies": {
     "@aws-cdk/aws-lambda-python-alpha": "^2.233.0-alpha.0",

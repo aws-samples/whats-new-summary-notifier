@@ -7,6 +7,7 @@ import feedparser
 import json
 import os
 import dateutil.parser
+from botocore.exceptions import ClientError
 
 # CRAWL_BLOG_URL = json.loads(os.environ["RSS_URL"])
 # NOTIFIERS = json.loads(os.environ["NOTIFIERS"])
@@ -60,13 +61,8 @@ def write_to_table(link, title, category, pubtime, notifier_name):
         }
         print(item)
         table.put_item(Item=item)
-    except Exception as e:
-        # Intentional error handling for duplicates to continue
-        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-            print("Duplicate item put: " + title)
-        else:
-            # Continue for other errors
-            print(e.message)
+    except ClientError as e:
+        print(f"DynamoDB error writing {title}: {e}")
 
 
 def add_blog(rss_name, entries, notifier_name):
@@ -92,7 +88,8 @@ def add_blog(rss_name, entries, notifier_name):
 
 def handler(event, context):
 
-    notifier_name, notifier = event.values()
+    notifier_name = event["notifierName"]
+    notifier = event["notifier"]
 
     rss_urls = notifier["rssUrl"]
     for rss_name, rss_url in rss_urls.items():
