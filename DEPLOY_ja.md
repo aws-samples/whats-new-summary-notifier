@@ -5,7 +5,7 @@
 
 ## 共通設定
 * `modelRegion`: Amazon Bedrock を利用するリージョン。Amazon Bedrock を利用可能なリージョンの中から、利用したいリージョンのリージョンコードを入力してください。
-* `modelId`: Amazon Bedrock で利用する基盤モデルの model ID。Anthropic Claude 3 およびそれ以前のバージョンに対応をしています。各モデルの model ID はドキュメントを参照ください。
+* `modelId`: Amazon Bedrock で利用する基盤モデルの model ID。各モデルの model ID はドキュメントを参照ください。
 
 ## summarizers
 生成 AI に入力する要約用プロンプトの設定を行います。

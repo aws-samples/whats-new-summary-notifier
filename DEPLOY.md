@@ -5,7 +5,7 @@ You can change the settings by modifying the values under the `context` section 
 
 ## Common Settings
 * `modelRegion`: The region to use Amazon Bedrock. Enter the region code of the region you want to use from among the regions where Amazon Bedrock is available.
-* `modelId`: The model ID of the base model to be used with Amazon Bedrock. It supports Anthropic Claude 3 and earlier versions. Refer to the documentation for the model ID of each model.
+* `modelId`: The model ID of the base model to be used with Amazon Bedrock. Refer to the documentation for the model ID of each model.
 
 ## summarizers
 Configure the prompt for summarizing the input to the generative AI.
