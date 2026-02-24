@@ -226,10 +226,7 @@ FINAL CHECK before you output: When output language is Japanese, scan your <summ
         params={
             "temperature": 0.1,
             "top_p": 0.1,
-            "max_completion_tokens": max_tokens
-        },
-        additional_request_fields={
-            "reasoning_effort": "medium"
+            "max_tokens": max_tokens
         },
         model_id=MODEL_ID,
         region_name=MODEL_REGION,
