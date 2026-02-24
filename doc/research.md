@@ -285,7 +285,7 @@ model = BedrockModel(
     params={
         "temperature": 0.1,      # 出力の確実性を高める（ランダム性低）
         "top_p": 0.1,            # 同上
-        "max_tokens": 16384
+        "max_tokens": 4096
     },
     model_id=MODEL_ID,           # 環境変数から取得
     region_name=MODEL_REGION,    # 環境変数から取得
