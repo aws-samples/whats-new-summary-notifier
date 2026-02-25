@@ -19,7 +19,7 @@
     },
     "context": {
         "modelRegion": "us-west-2",
-        "modelId": "amazon.nova-pro-v1:0",
+        "modelId": "us.amazon.nova-pro-v1:0",
         "summarizers": {
             "AwsSolutionsArchitectEnglish": {
                 "outputLanguage": "English.",

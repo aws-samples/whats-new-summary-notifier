@@ -20,6 +20,9 @@ export class WhatsNewSummaryNotifierStack extends Stack {
 
     const modelRegion = this.node.tryGetContext('modelRegion');
     const modelId = this.node.tryGetContext('modelId');
+    // Cross-region inference profile IDs (e.g. "us.amazon.nova-pro-v1:0") have a regional
+    // prefix. Strip it to obtain the underlying foundation model ID for IAM policy ARNs.
+    const baseModelId = modelId.replace(/^(us|eu|ap)\./, '');
 
     const notifiers: [] = this.node.tryGetContext('notifiers');
     const summarizers: [] = this.node.tryGetContext('summarizers');
@@ -40,7 +43,9 @@ export class WhatsNewSummaryNotifierStack extends Stack {
             actions: ['bedrock:InvokeModel'],
             effect: Effect.ALLOW,
             resources: [
-              `arn:aws:bedrock:${modelRegion}::foundation-model/${modelId}`,
+              // Allow cross-region access to the underlying foundation model.
+              // The region is "*" because cross-region inference may route to any region.
+              `arn:aws:bedrock:*::foundation-model/${baseModelId}`,
               `arn:aws:bedrock:${modelRegion}:${accountId}:inference-profile/*`,
             ],
           }),
