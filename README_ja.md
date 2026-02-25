@@ -52,7 +52,7 @@
 ## デプロイ手順
 >
 > [!IMPORTANT]
-> このリポジトリでは、デフォルトで米国東部 (バージニア北部) リージョン (us-east-1) の Anthropic Claude 3 Sonnet モデルを利用する設定になっています。[Model access 画面 (us-east-1)](https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess)を開き、Anthropic Claude 3 Sonnet にチェックして Save changes してください。
+> このリポジトリでは、デフォルトで米国西部 (オレゴン) リージョン (us-west-2) の Amazon Nova Pro モデル (クロスリージョンインファレンスプロファイル) を利用する設定になっています。[Model access 画面 (us-west-2)](https://us-west-2.console.aws.amazon.com/bedrock/home?region=us-west-2#/modelaccess)を開き、Amazon Nova Pro にチェックして Save changes してください。
 
 ### Webhook URL の取得
 
@@ -127,16 +127,18 @@ cdk synth --profile your-profile-name
 
 デプロイ先リージョンは `CDK_DEFAULT_REGION` で指定します。`.env.example` を `.env` にコピーし、リージョン（例: `CDK_DEFAULT_REGION=us-east-1`）を設定してください。未設定の場合は `us-east-1` が使われます。
 
+AWS プロファイルのデフォルトリージョンがデプロイ先と異なる場合、CDK の bootstrap 参照がプロファイルのリージョンを参照してしまいます。その場合は `AWS_DEFAULT_REGION` もあわせて指定してください。
+
 **デプロイの実行**
 
 ```bash
 cdk deploy
 ```
 
-特定のAWSプロファイルを使用している場合は、`--profile`オプションを追加してください：
+特定のAWSプロファイルを使用している場合や、プロファイルのリージョンがデプロイ先と異なる場合は、以下のように指定してください：
 
 ```bash
-cdk deploy --profile your-profile-name
+AWS_DEFAULT_REGION=us-east-1 cdk deploy --profile your-profile-name
 ```
 
 ## スタックの削除
