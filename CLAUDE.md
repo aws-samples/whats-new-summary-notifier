@@ -54,7 +54,7 @@ The application consists of:
 The application is configured via the `context` section in `cdk.json`:
 
 - **modelRegion**: AWS region for Bedrock (currently us-west-2)
-- **modelId**: Bedrock model ID (currently openai.gpt-oss-120b-1:0)
+- **modelId**: Bedrock model ID (currently amazon.nova-pro-v1:0)
 - **summarizers**: Define different AI personas and output languages
 - **notifiers**: Configure RSS sources, schedules, and Slack webhook parameters
 
@@ -76,7 +76,7 @@ The application is configured via the `context` section in `cdk.json`:
 
 - Triggered by DynamoDB streams on new RSS entries (batchSize=1, StreamViewType=NEW_IMAGE)
 - Scrapes full article content using cloudscraper and BeautifulSoup (targets `<main>` tag)
-- Summarizes content using Strands Agents SDK (`strands-agents` library) with Bedrock — temperature=0.1, reasoning_effort="medium"
+- Summarizes content using Strands Agents SDK (`strands-agents` library) with Bedrock — temperature=0.1
 - Posts formatted messages to Slack with Twitter sharing links
 - F1 notifier has a strict Japanese glossary for driver/team names — edit carefully
 

@@ -42,6 +42,7 @@ jobs:
       - name: pip-audit (notify-to-app)
         run: |
           python -m venv .venv-notify
+          .venv-notify/bin/python -m pip install --upgrade pip -q
           .venv-notify/bin/pip install -r lambda/notify-to-app/requirements.txt -q
           .venv-notify/bin/pip install pip-audit -q
           .venv-notify/bin/pip-audit
@@ -49,6 +50,7 @@ jobs:
       - name: pip-audit (rss-crawler)
         run: |
           python -m venv .venv-rss
+          .venv-rss/bin/python -m pip install --upgrade pip -q
           .venv-rss/bin/pip install -r lambda/rss-crawler/requirements.txt -q
           .venv-rss/bin/pip install pip-audit -q
           .venv-rss/bin/pip-audit

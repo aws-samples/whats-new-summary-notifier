@@ -20,7 +20,7 @@
 | IaC言語 | TypeScript | ^5.9.3 |
 | Lambdaランタイム | Python | 3.12 |
 | AIエージェントフレームワーク | Strands Agent SDK | ^1.25.0 |
-| LLM | Amazon Bedrock | openai.gpt-oss-120b-1:0 |
+| LLM | Amazon Bedrock | amazon.nova-pro-v1:0 |
 | データストア | Amazon DynamoDB | サーバーレス |
 | イベントスケジューラ | Amazon EventBridge | Cronルール |
 | シークレット管理 | AWS SSM Parameter Store | SecureString |
@@ -285,10 +285,7 @@ model = BedrockModel(
     params={
         "temperature": 0.1,      # 出力の確実性を高める（ランダム性低）
         "top_p": 0.1,            # 同上
-        "max_completion_tokens": 4096
-    },
-    additional_request_fields={
-        "reasoning_effort": "medium"  # 思考の深さ（medium = バランス型）
+        "max_tokens": 4096
     },
     model_id=MODEL_ID,           # 環境変数から取得
     region_name=MODEL_REGION,    # 環境変数から取得
@@ -306,10 +303,9 @@ response = agent(blog_body)  # 記事本文を入力として渡す
 
 ### Bedrockモデル設定
 
-- モデルID: `openai.gpt-oss-120b-1:0`（`cdk.json` で変更可能）
+- モデルID: `amazon.nova-pro-v1:0`（`cdk.json` で変更可能）
 - リージョン: `us-west-2`（`cdk.json` で変更可能）
 - `temperature: 0.1`, `top_p: 0.1` は意図的に低く設定し、事実に基づく正確な要約を優先
-- `reasoning_effort: "medium"` は思考過程の深さの指定
 
 ### 構造化出力
 
@@ -368,7 +364,7 @@ F1ジャーナリスト兼ファンのペルソナ。日本語出力時は必ず
 {
   "context": {
     "modelRegion": "us-west-2",
-    "modelId": "openai.gpt-oss-120b-1:0",
+    "modelId": "amazon.nova-pro-v1:0",
     "summarizers": { ... },
     "notifiers": { ... }
   }

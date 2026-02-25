@@ -21,3 +21,6 @@ ENV/
 
 # VS Code
 .vscode/
+
+# Git worktrees
+.worktrees/
