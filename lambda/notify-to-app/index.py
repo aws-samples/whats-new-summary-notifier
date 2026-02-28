@@ -236,7 +236,7 @@ STRICT RULES for Twitter summary:
 - If the article covers multiple topics, tweet about only the most important one (selected in STEP 3 of your reasoning). Do not attempt to cover all topics in 200 characters.
 - State the key fact (who, what, result or decision) in one tight sentence.
 </twitterRules>
-<outputFormat><thinking>(detailed bullet point analysis of the F1 news)</thinking><summary>(professional summary; if Japanese, all proper nouns and technical terms MUST use the exact forms from the glossary)</summary><twitter>(Twitter-ready summary within 200 characters; if Japanese, all names/teams/terms MUST be in glossary Japanese only)</twitter></outputFormat>
+<outputFormat><thinking>(3-step reasoning: STEP 1 category list, STEP 2 key points per category, STEP 3 most important category for twitter)</thinking><summary>(bullet list — one bullet per topic detected in STEP 1, each starting with an AI-chosen Japanese sub-heading and a colon; 1-2 sentences per bullet; all proper nouns and technical terms MUST use exact glossary forms)</summary><twitter>(Twitter-ready summary within 200 characters; if Japanese, all names/teams/terms MUST be in glossary Japanese only)</twitter></outputFormat>
 
 FINAL CHECK before you output: When output language is Japanese, scan your <summary> and <twitter> for any English proper nouns (e.g. "Verstappen", "Ferrari", "Mercedes") or technical terms (e.g. "Qualifying", "Safety Car"). If found, replace them with the exact Japanese form from the glossary. Your response is only correct when every such term appears in the glossary form.
 """
