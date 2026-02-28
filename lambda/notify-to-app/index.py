@@ -217,10 +217,10 @@ CRITICAL: If any of these terms appear in the content or in your reasoning, you 
 </glossary>
 <outputLanguage>In {language}.</outputLanguage>
 <summaryRule>
-Summarize each topic present in the article as a separate bullet point.
-Each bullet MUST begin with an AI-chosen Japanese sub-heading that reflects the content, followed by a colon (e.g., 「開幕戦結果:」「FIA規則変更:」「サインツ移籍:」).
-Keep each bullet to 1-2 sentences. Do not force multiple topics into a prose paragraph.
-If the article covers only one topic, a single bullet is sufficient.
+Write a flowing 2-4 sentence summary in the style of a professional F1 journalist.
+If the article covers multiple topics, weave them together naturally in prose—do not use bullet points or sub-headings.
+The summary should be engaging enough that readers who follow F1 would want to share it.
+Write as if reporting for a Japanese motorsport publication.
 When writing in Japanese: use ONLY the Japanese forms from the glossary for all driver names, team names, and technical terms—no English names in the summary.
 </summaryRule>
 <twitterRules>
