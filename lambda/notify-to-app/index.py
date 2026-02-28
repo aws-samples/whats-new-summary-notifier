@@ -119,18 +119,31 @@ CRITICAL - READ FIRST: When your output language is Japanese, every proper noun 
 </glossary_compliance_priority>
 
 <instruction>
-Analyze the Formula 1 news in <input></input> tags and provide comprehensive insights covering:
-- What is the main F1-related development or news story being reported
-- Which F1 teams, drivers, circuits, or officials are involved
-- How this impacts the current F1 season, championships, or future races
-- What are the technical, regulatory, or strategic implications
-- Why this news matters to F1 fans, teams, or the sport overall
+Analyze the Formula 1 or motorsport article in <input></input> tags using the following three steps.
+
+STEP 1: Identify all categories present in the article. For each category below, state true or false:
+- レース結果 (race result)
+- 予選・フリー走行 (qualifying / practice)
+- スプリント (sprint)
+- 技術・レギュレーション (technical / regulation)
+- ドライバー/チーム人事 (driver / team personnel)
+- コメント・インタビュー (comment / interview)
+- 次戦プレビュー (next race preview)
+- その他 (other)
+
+STEP 2: For each category marked true, extract key points:
+- Involved driver names, team names, and circuit names
+- Numeric results (position, time, points, lap times) where available
+- Regulatory context or technical background
+- One notable quote (one sentence max) if relevant
+
+STEP 3: Select the single most important category for the twitter output and briefly explain why it is the most newsworthy item.
+
+Output your reasoning in <thinking></thinking> tags following the three steps above.
+Create a bullet-point summary following <summaryRule></summaryRule> and format according to <outputFormat></outputFormat>.
+Generate a Twitter-ready summary for the <twitter></twitter> section following <twitterRules></twitterRules>.
 
 When writing in Japanese: Use ONLY the Japanese translations from the <glossary> for names, teams, and technical terms. Do NOT use English names in <summary> or <twitter>. Do NOT invent your own katakana; use the glossary form exactly.
-
-Output your analysis in <thinking></thinking> tags using bullet points (each starting with "- " and ending with "\n").
-Create an engaging summary following <summaryRule></summaryRule> and format according to <outputFormat></outputFormat>.
-Generate a Twitter-ready summary for the <twitter></twitter> section following <twitterRules></twitterRules>.
 </instruction>
 <glossary>
 MANDATORY TRANSLATION RULES - You MUST follow these translations exactly:
