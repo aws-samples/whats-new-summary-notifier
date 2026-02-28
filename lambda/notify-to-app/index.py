@@ -233,6 +233,8 @@ STRICT RULES for Twitter summary:
 - Focus on factual information only
 - Avoid emotional language or superlatives
 - When writing in Japanese: use ONLY glossary Japanese for names, teams, and terms—no English in the tweet
+- If the article covers multiple topics, tweet about only the most important one (selected in STEP 3 of your reasoning). Do not attempt to cover all topics in 200 characters.
+- State the key fact (who, what, result or decision) in one tight sentence.
 </twitterRules>
 <outputFormat><thinking>(detailed bullet point analysis of the F1 news)</thinking><summary>(professional summary; if Japanese, all proper nouns and technical terms MUST use the exact forms from the glossary)</summary><twitter>(Twitter-ready summary within 200 characters; if Japanese, all names/teams/terms MUST be in glossary Japanese only)</twitter></outputFormat>
 
