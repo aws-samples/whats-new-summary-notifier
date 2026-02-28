@@ -20,7 +20,7 @@
 | IaC言語 | TypeScript | ^5.9.3 |
 | Lambdaランタイム | Python | 3.12 |
 | AIエージェントフレームワーク | Strands Agent SDK | ^1.25.0 |
-| LLM | Amazon Bedrock | amazon.nova-pro-v1:0 |
+| LLM | Amazon Bedrock | us.amazon.nova-pro-v1:0 |
 | データストア | Amazon DynamoDB | サーバーレス |
 | イベントスケジューラ | Amazon EventBridge | Cronルール |
 | シークレット管理 | AWS SSM Parameter Store | SecureString |
@@ -303,7 +303,7 @@ response = agent(blog_body)  # 記事本文を入力として渡す
 
 ### Bedrockモデル設定
 
-- モデルID: `amazon.nova-pro-v1:0`（`cdk.json` で変更可能）
+- モデルID: `us.amazon.nova-pro-v1:0`（クロスリージョンインファレンスプロファイル。`cdk.json` で変更可能）
 - リージョン: `us-west-2`（`cdk.json` で変更可能）
 - `temperature: 0.1`, `top_p: 0.1` は意図的に低く設定し、事実に基づく正確な要約を優先
 
@@ -364,7 +364,7 @@ F1ジャーナリスト兼ファンのペルソナ。日本語出力時は必ず
 {
   "context": {
     "modelRegion": "us-west-2",
-    "modelId": "amazon.nova-pro-v1:0",
+    "modelId": "us.amazon.nova-pro-v1:0",
     "summarizers": { ... },
     "notifiers": { ... }
   }

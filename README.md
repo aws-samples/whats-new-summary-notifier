@@ -54,7 +54,7 @@ The project pins direct dependencies in `requirements.txt` (e.g. `package>=x.y.z
 ## Deployment Steps
 >
 > [!IMPORTANT]
-> This repository is set up to use the Anthropic Claude 3 Sonnet model in the US East (N. Virginia) region (us-east-1) by default. Please open the [Model access screen (us-east-1)](https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess), check the Anthropic Claude 3 Sonnet option, and click Save changes.
+> This repository is configured to use the Amazon Nova Pro model (cross-region inference profile) in the US West (Oregon) region (us-west-2) by default. Please open the [Model access screen (us-west-2)](https://us-west-2.console.aws.amazon.com/bedrock/home?region=us-west-2#/modelaccess), check the Amazon Nova Pro option, and click Save changes.
 
 ### Create Webhook URL
 
@@ -93,6 +93,8 @@ This asset is set up to output summaries in Japanese (日本語) by default. If 
 
 The deploy target region is read from `CDK_DEFAULT_REGION`. Copy `.env.example` to `.env` and set the region (e.g. `CDK_DEFAULT_REGION=us-east-1`). If unset, the stack defaults to `us-east-1`.
 
+If your AWS profile's default region differs from the deploy target, the CDK CLI will use the profile region for bootstrap lookups and fail. In that case, also set `AWS_DEFAULT_REGION` explicitly (see deploy command below).
+
 **Initialize**
 
 If you haven't used CDK in this region before, run the following command:
@@ -104,7 +106,7 @@ cdk bootstrap
 If you are using a specific AWS profile, add the `--profile` option:
 
 ```bash
-cdk bootstrap --profile your-profile-name
+AWS_DEFAULT_REGION=us-east-1 cdk bootstrap --profile your-profile-name
 ```
 
 **Verify no errors**
@@ -113,22 +115,16 @@ cdk bootstrap --profile your-profile-name
 cdk synth
 ```
 
-If you are using a specific AWS profile, add the `--profile` option:
-
-```bash
-cdk synth --profile your-profile-name
-```
-
 **Execute Deployment**
 
 ```bash
 cdk deploy
 ```
 
-If you are using a specific AWS profile, add the `--profile` option:
+If your AWS profile region differs from the deploy target, specify both variables:
 
 ```bash
-cdk deploy --profile your-profile-name
+AWS_DEFAULT_REGION=us-east-1 cdk deploy --profile your-profile-name
 ```
 
 ## Delete Stack

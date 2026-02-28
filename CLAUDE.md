@@ -54,7 +54,7 @@ The application consists of:
 The application is configured via the `context` section in `cdk.json`:
 
 - **modelRegion**: AWS region for Bedrock (currently us-west-2)
-- **modelId**: Bedrock model ID (currently amazon.nova-pro-v1:0)
+- **modelId**: Bedrock model ID (currently us.amazon.nova-pro-v1:0 — cross-region inference profile)
 - **summarizers**: Define different AI personas and output languages
 - **notifiers**: Configure RSS sources, schedules, and Slack webhook parameters
 
