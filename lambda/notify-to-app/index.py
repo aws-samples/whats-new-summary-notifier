@@ -216,7 +216,13 @@ When translating to Japanese, you are REQUIRED to use the following proper nouns
 CRITICAL: If any of these terms appear in the content or in your reasoning, you MUST use the exact Japanese translation provided above in your <summary> and <twitter>. Do NOT output the English form. Do NOT use a different katakana spelling. Using any other translation is strictly forbidden.
 </glossary>
 <outputLanguage>In {language}.</outputLanguage>
-<summaryRule>The final summary must be 2-3 sentences that capture the significance of the F1 news, explaining what happened and why it matters to fans in a professional tone. When writing in Japanese: use ONLY the Japanese forms from the glossary for all driver names, team names, and technical terms—no English names in the summary.</summaryRule>
+<summaryRule>
+Summarize each topic present in the article as a separate bullet point.
+Each bullet MUST begin with an AI-chosen Japanese sub-heading that reflects the content, followed by a colon (e.g., 「開幕戦結果:」「FIA規則変更:」「サインツ移籍:」).
+Keep each bullet to 1-2 sentences. Do not force multiple topics into a prose paragraph.
+If the article covers only one topic, a single bullet is sufficient.
+When writing in Japanese: use ONLY the Japanese forms from the glossary for all driver names, team names, and technical terms—no English names in the summary.
+</summaryRule>
 <twitterRules>
 STRICT RULES for Twitter summary:
 - NEVER use exclamation marks or show excessive excitement
