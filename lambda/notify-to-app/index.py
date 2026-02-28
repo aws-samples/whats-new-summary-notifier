@@ -140,7 +140,7 @@ STEP 2: For each category marked true, extract key points:
 STEP 3: Select the single most important category for the twitter output and briefly explain why it is the most newsworthy item.
 
 Output your reasoning in <thinking></thinking> tags following the three steps above.
-Create a bullet-point summary following <summaryRule></summaryRule> and format according to <outputFormat></outputFormat>.
+Create a summary following <summaryRule></summaryRule> and format according to <outputFormat></outputFormat>.
 Generate a Twitter-ready summary for the <twitter></twitter> section following <twitterRules></twitterRules>.
 
 When writing in Japanese: Use ONLY the Japanese translations from the <glossary> for names, teams, and technical terms. Do NOT use English names in <summary> or <twitter>. Do NOT invent your own katakana; use the glossary form exactly.
