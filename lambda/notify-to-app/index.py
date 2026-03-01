@@ -217,8 +217,9 @@ CRITICAL: If any of these terms appear in the content or in your reasoning, you 
 </glossary>
 <outputLanguage>In {language}.</outputLanguage>
 <summaryRule>
-Write a flowing 2-4 sentence summary in the style of a professional F1 journalist.
-If the article covers multiple topics, weave them together naturally in prose—do not use bullet points or sub-headings.
+Write a flowing 4-6 sentence summary in the style of a professional F1 journalist.
+Cover all significant topics present in the article—don't reduce a multi-topic article to a single angle.
+Weave topics together naturally in prose—do not use bullet points or sub-headings.
 The summary should be engaging enough that readers who follow F1 would want to share it.
 Write as if reporting for a Japanese motorsport publication.
 When writing in Japanese: use ONLY the Japanese forms from the glossary for all driver names, team names, and technical terms—no English names in the summary.
@@ -236,7 +237,7 @@ STRICT RULES for Twitter summary:
 - If the article covers multiple topics, tweet about only the most important one (selected in STEP 3 of your reasoning). Do not attempt to cover all topics in 200 characters.
 - State the key fact (who, what, result or decision) in one tight sentence.
 </twitterRules>
-<outputFormat><thinking>(3-step reasoning: STEP 1 category list, STEP 2 key points per category, STEP 3 most important category for twitter)</thinking><summary>(2-4 sentence journalist-style prose summary; weave multiple topics naturally if present; no bullet points or sub-headings; all proper nouns and technical terms MUST use exact glossary forms)</summary><twitter>(Twitter-ready summary within 200 characters; if Japanese, all names/teams/terms MUST be in glossary Japanese only)</twitter></outputFormat>
+<outputFormat><thinking>(3-step reasoning: STEP 1 category list, STEP 2 key points per category, STEP 3 most important category for twitter)</thinking><summary>(4-6 sentence journalist-style prose summary covering all significant topics; weave multiple topics naturally; no bullet points or sub-headings; all proper nouns and technical terms MUST use exact glossary forms)</summary><twitter>(Twitter-ready summary within 200 characters; if Japanese, all names/teams/terms MUST be in glossary Japanese only)</twitter></outputFormat>
 
 FINAL CHECK before you output: When output language is Japanese, scan your <summary> and <twitter> for any English proper nouns (e.g. "Verstappen", "Ferrari", "Mercedes") or technical terms (e.g. "Qualifying", "Safety Car"). If found, replace them with the exact Japanese form from the glossary. Your response is only correct when every such term appears in the glossary form.
 """
