@@ -273,14 +273,12 @@ FINAL CHECK before you output: When output language is Japanese, scan your <summ
             raise ValueError("No text content found in response")
 
         summary_matches = re.findall(r"<summary>([\s\S]*?)</summary>", outputText)
-        detail_matches = re.findall(r"<thinking>([\s\S]*?)</thinking>", outputText)
         twitter_matches = re.findall(r"<twitter>([\s\S]*?)</twitter>", outputText)
 
-        if not summary_matches or not detail_matches or not twitter_matches:
+        if not summary_matches or not twitter_matches:
             raise ValueError(f"Response missing required XML tags: {outputText[:300]}")
 
         summary = summary_matches[0]
-        detail = detail_matches[0]
         twitter = twitter_matches[0]
     except ClientError as error:
         if error.response["Error"]["Code"] == "AccessDeniedException":
@@ -294,7 +292,7 @@ FINAL CHECK before you output: When output language is Japanese, scan your <summ
         else:
             raise error
 
-    return summary, detail, twitter
+    return summary, twitter
 
 
 def push_notification(item_list):
@@ -321,11 +319,10 @@ def push_notification(item_list):
 
         # Summarize the blog
         summarizer = SUMMARIZERS[notifier["summarizerName"]]
-        summary, detail, twitter = summarize_blog(content, language=summarizer["outputLanguage"], persona=summarizer["persona"], summarizer_name=notifier["summarizerName"])
+        summary, twitter = summarize_blog(content, language=summarizer["outputLanguage"], persona=summarizer["persona"], summarizer_name=notifier["summarizerName"])
 
         # Add the summary text to notified message
         item["summary"] = summary
-        item["detail"] = detail
         item["twitter"] = twitter
 
         item["twitter"] = item["twitter"].replace("\n", "")
