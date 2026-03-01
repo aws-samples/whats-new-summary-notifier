@@ -119,18 +119,31 @@ CRITICAL - READ FIRST: When your output language is Japanese, every proper noun 
 </glossary_compliance_priority>
 
 <instruction>
-Analyze the Formula 1 news in <input></input> tags and provide comprehensive insights covering:
-- What is the main F1-related development or news story being reported
-- Which F1 teams, drivers, circuits, or officials are involved
-- How this impacts the current F1 season, championships, or future races
-- What are the technical, regulatory, or strategic implications
-- Why this news matters to F1 fans, teams, or the sport overall
+Analyze the Formula 1 or motorsport article in <input></input> tags using the following three steps.
+
+STEP 1: Identify all categories present in the article. For each category below, state true or false:
+- レース結果 (race result)
+- 予選・フリー走行 (qualifying / practice)
+- スプリント (sprint)
+- 技術・レギュレーション (technical / regulation)
+- ドライバー/チーム人事 (driver / team personnel)
+- コメント・インタビュー (comment / interview)
+- 次戦プレビュー (next race preview)
+- その他 (other)
+
+STEP 2: For each category marked true, extract key points:
+- Involved driver names, team names, and circuit names
+- Numeric results (position, time, points, lap times) where available
+- Regulatory context or technical background
+- One notable quote (one sentence max) if relevant
+
+STEP 3: Select the single most important category for the twitter output and briefly explain why it is the most newsworthy item.
+
+Output your reasoning in <thinking></thinking> tags following the three steps above.
+Create a summary following <summaryRule></summaryRule> and format according to <outputFormat></outputFormat>.
+Generate a Twitter-ready summary for the <twitter></twitter> section following <twitterRules></twitterRules>.
 
 When writing in Japanese: Use ONLY the Japanese translations from the <glossary> for names, teams, and technical terms. Do NOT use English names in <summary> or <twitter>. Do NOT invent your own katakana; use the glossary form exactly.
-
-Output your analysis in <thinking></thinking> tags using bullet points (each starting with "- " and ending with "\n").
-Create an engaging summary following <summaryRule></summaryRule> and format according to <outputFormat></outputFormat>.
-Generate a Twitter-ready summary for the <twitter></twitter> section following <twitterRules></twitterRules>.
 </instruction>
 <glossary>
 MANDATORY TRANSLATION RULES - You MUST follow these translations exactly:
@@ -203,7 +216,14 @@ When translating to Japanese, you are REQUIRED to use the following proper nouns
 CRITICAL: If any of these terms appear in the content or in your reasoning, you MUST use the exact Japanese translation provided above in your <summary> and <twitter>. Do NOT output the English form. Do NOT use a different katakana spelling. Using any other translation is strictly forbidden.
 </glossary>
 <outputLanguage>In {language}.</outputLanguage>
-<summaryRule>The final summary must be 2-3 sentences that capture the significance of the F1 news, explaining what happened and why it matters to fans in a professional tone. When writing in Japanese: use ONLY the Japanese forms from the glossary for all driver names, team names, and technical terms—no English names in the summary.</summaryRule>
+<summaryRule>
+Write a flowing 4-6 sentence summary in the style of a professional F1 journalist.
+Cover all significant topics present in the article—don't reduce a multi-topic article to a single angle.
+Weave topics together naturally in prose—do not use bullet points or sub-headings.
+The summary should be engaging enough that readers who follow F1 would want to share it.
+Write as if reporting for a Japanese motorsport publication.
+When writing in Japanese: use ONLY the Japanese forms from the glossary for all driver names, team names, and technical terms—no English names in the summary.
+</summaryRule>
 <twitterRules>
 STRICT RULES for Twitter summary:
 - NEVER use exclamation marks or show excessive excitement
@@ -214,8 +234,10 @@ STRICT RULES for Twitter summary:
 - Focus on factual information only
 - Avoid emotional language or superlatives
 - When writing in Japanese: use ONLY glossary Japanese for names, teams, and terms—no English in the tweet
+- If the article covers multiple topics, tweet about only the most important one (selected in STEP 3 of your reasoning). Do not attempt to cover all topics in 200 characters.
+- State the key fact (who, what, result or decision) in one tight sentence.
 </twitterRules>
-<outputFormat><thinking>(detailed bullet point analysis of the F1 news)</thinking><summary>(professional summary; if Japanese, all proper nouns and technical terms MUST use the exact forms from the glossary)</summary><twitter>(Twitter-ready summary within 200 characters; if Japanese, all names/teams/terms MUST be in glossary Japanese only)</twitter></outputFormat>
+<outputFormat><thinking>(3-step reasoning: STEP 1 category list, STEP 2 key points per category, STEP 3 most important category for twitter)</thinking><summary>(4-6 sentence journalist-style prose summary covering all significant topics; weave multiple topics naturally; no bullet points or sub-headings; all proper nouns and technical terms MUST use exact glossary forms)</summary><twitter>(Twitter-ready summary within 200 characters; if Japanese, all names/teams/terms MUST be in glossary Japanese only)</twitter></outputFormat>
 
 FINAL CHECK before you output: When output language is Japanese, scan your <summary> and <twitter> for any English proper nouns (e.g. "Verstappen", "Ferrari", "Mercedes") or technical terms (e.g. "Qualifying", "Safety Car"). If found, replace them with the exact Japanese form from the glossary. Your response is only correct when every such term appears in the glossary form.
 """
@@ -251,14 +273,12 @@ FINAL CHECK before you output: When output language is Japanese, scan your <summ
             raise ValueError("No text content found in response")
 
         summary_matches = re.findall(r"<summary>([\s\S]*?)</summary>", outputText)
-        detail_matches = re.findall(r"<thinking>([\s\S]*?)</thinking>", outputText)
         twitter_matches = re.findall(r"<twitter>([\s\S]*?)</twitter>", outputText)
 
-        if not summary_matches or not detail_matches or not twitter_matches:
+        if not summary_matches or not twitter_matches:
             raise ValueError(f"Response missing required XML tags: {outputText[:300]}")
 
         summary = summary_matches[0]
-        detail = detail_matches[0]
         twitter = twitter_matches[0]
     except ClientError as error:
         if error.response["Error"]["Code"] == "AccessDeniedException":
@@ -272,7 +292,7 @@ FINAL CHECK before you output: When output language is Japanese, scan your <summ
         else:
             raise error
 
-    return summary, detail, twitter
+    return summary, twitter
 
 
 def push_notification(item_list):
@@ -299,11 +319,10 @@ def push_notification(item_list):
 
         # Summarize the blog
         summarizer = SUMMARIZERS[notifier["summarizerName"]]
-        summary, detail, twitter = summarize_blog(content, language=summarizer["outputLanguage"], persona=summarizer["persona"], summarizer_name=notifier["summarizerName"])
+        summary, twitter = summarize_blog(content, language=summarizer["outputLanguage"], persona=summarizer["persona"], summarizer_name=notifier["summarizerName"])
 
         # Add the summary text to notified message
         item["summary"] = summary
-        item["detail"] = detail
         item["twitter"] = twitter
 
         item["twitter"] = item["twitter"].replace("\n", "")
@@ -358,7 +377,6 @@ def create_slack_message(item):
         "text": f"{item['rss_time']}\n" \
                 f"<{item['rss_link']}|{item['rss_title']}>\n" \
                 f"{item['summary']}\n" \
-                f"{item['detail']}\n" \
                 f"<https://x.com/intent/tweet?url={encoded_rss_link}&text={encoded_twitter_text}|Share on X>"
     }
 
