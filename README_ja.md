@@ -11,26 +11,16 @@
 ![architecture](doc/architecture.png)
 
 ## 前提条件
-- Unix コマンドを実行できる環境 (Mac、Linux、...)
-  - そのような環境がない場合は、AWS Cloud9 を使用することも可能です。[操作環境の準備 (AWS Cloud9)](DEPLOY_ja.md) をご参照ください。
-- aws-cdk
-  - `npm install -g aws-cdk` でインストール可能です。詳しくは [AWS ドキュメント](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html)を参考にしてください。
-- Docker 
-  - [`aws-lambda-python-alpha`](https://docs.aws.amazon.com/cdk/api/v2/docs/aws-lambda-python-alpha-readme.html) コンストラクトで Lambda をビルドするために Docker が必要です。詳しくは [Docker ドキュメント](https://docs.docker.com/engine/install/)を参考にしてください。
+- [CloudShell](https://console.aws.amazon.com/cloudshell/home) が利用可能な AWS アカウント
+- Slack または Microsoft Teams の Webhook URL
+- （手動デプロイの場合のみ）Node.js 22+, Docker, [AWS CDK CLI](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html)
 
 ## デプロイ手順
-> [!IMPORTANT]
-> このリポジトリでは、デフォルトで米国東部 (バージニア北部) リージョン (us-east-1) の Anthropic Claude 3 Sonnet モデルを利用する設定になっています。[Model access 画面 (us-east-1)](https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess)を開き、Anthropic Claude 3 Sonnet にチェックして Save changes してください。
 
 ### Webhook URL の取得
-通知に必要となる Webhook URL の払い出しを行います。
-
-#### Microsoft Teams の場合
-
-まず `cdk.json` を開き、`context` の`notifiers`内、`destination` を `slack` から `teams` に書き換えてください。次に、[こちらのドキュメント](https://learn.microsoft.com/ja-jp/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook?tabs=newteams%2Cdotnet)を参考にして Webhook URL を取得してください。
 
 #### Slack の場合
-[こちらのドキュメント](https://slack.com/intl/ja-jp/help/articles/360041352714-%E3%83%AF%E3%83%BC%E3%82%AF%E3%83%95%E3%83%AD%E3%83%BC%E3%82%92%E4%BD%9C%E6%88%90%E3%81%99%E3%82%8B---Slack-%E5%A4%96%E9%83%A8%E3%81%A7%E9%96%8B%E5%A7%8B%E3%81%95%E3%82%8C%E3%82%8B%E3%83%AF%E3%83%BC%E3%82%AF%E3%83%95%E3%83%AD%E3%83%BC%E3%82%92%E4%BD%9C%E6%88%90%E3%81%99%E3%82%8B)を参考にして Webhook URL を取得してください。「変数を追加する」を選び、次の 5 つの変数をすべてテキストデータタイプで作成します。
+[こちらのドキュメント](https://slack.com/intl/ja-jp/help/articles/360041352714)を参考にして Webhook URL を取得してください。「変数を追加する」を選び、次の 5 つの変数をすべてテキストデータタイプで作成します:
 
 * `rss_time`: 記事の投稿時間
 * `rss_link`: 記事の URL
@@ -38,45 +28,40 @@
 * `summary`: 記事の要約
 * `detail`: 記事の箇条書き説明
 
-### AWS Systems Manager Parameter Store を作成
+#### Microsoft Teams の場合
+[こちらのドキュメント](https://learn.microsoft.com/ja-jp/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook?tabs=newteams%2Cdotnet)を参考にして Webhook URL を取得してください。
 
-Parameter Store を使って 通知用の URL をセキュアに格納します。
+### デプロイ
 
-#### パラメータストア登録 (AWS CLI)
+[CloudShell](https://console.aws.amazon.com/cloudshell/home) を開き、以下を実行します:
 
-```
-aws ssm put-parameter \
-  --name "/WhatsNew/URL" \
-  --type "SecureString" \
-  --value "<Webhook URL を入力>"
-```
-
-### 言語設定の変更 (オプション)
-このアセットはデフォルトで日本語の要約を出力するように設定されています。英語等の他言語の出力を行う場合は、`cdk.json` を開き、`context` 内の `notifiers` 内の `summarizerName` を `AwsSolutionsArchitectJapanese` から `AwsSolutionsArchitectEnglish` などに書き換えてください。その他の設定オプションについては[デプロイガイド](DEPLOY_ja.md)を参照してください。
-
-### デプロイの実行
-**初期化**
-
-このリージョンで CDK を使用したことがない場合は、次のコマンドを実行します。
-
-```
-cdk bootstrap
+```bash
+git clone https://github.com/aws-samples/whats-new-summary-notifier.git
+cd whats-new-summary-notifier
+bash deploy.sh
 ```
 
-**エラーがないことを確認** 
-```
-cdk synth
-```
+対話ウィザードが通知先（Slack/Teams）、要約言語、Webhook URL を順に質問します。デプロイは AWS CodeBuild 経由で自動的に実行されます。
 
-**デプロイの実行** 
+マルチテナントデプロイなどの詳細設定については[デプロイガイド](DEPLOY_ja.md)を参照してください。
 
-```
-cdk deploy
+## Management Console
+
+デプロイの管理、設定の更新、ビルドの監視、データの確認を行うローカル Web アプリケーションです。詳細は [Management Console ガイド](CONSOLE_ja.md) を参照してください。
+
+```bash
+npm run dev:console
 ```
 
 ## スタックの削除
-不要になった場合は以下のコマンドを実行しスタックを削除します。
+
+deploy.sh を使用（推奨）:
+```bash
+bash deploy.sh --destroy
 ```
+
+または手動で:
+```bash
 cdk destroy
 ```
 デフォルトでは Amazon DynamoDB テーブルなど一部のリソースが削除されず残る設定となっています。

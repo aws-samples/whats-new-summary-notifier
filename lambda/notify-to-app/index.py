@@ -15,12 +15,14 @@ from bs4 import BeautifulSoup
 from botocore.exceptions import ClientError
 import re
 
-MODEL_ID = os.environ["MODEL_ID"]
+MODEL_IDS = json.loads(os.environ["MODEL_IDS"])
 MODEL_REGION = os.environ["MODEL_REGION"]
 NOTIFIERS = json.loads(os.environ["NOTIFIERS"])
 SUMMARIZERS = json.loads(os.environ["SUMMARIZERS"])
 
 ssm = boto3.client("ssm")
+ddb = boto3.resource("dynamodb")
+ddb_table = ddb.Table(os.environ["DDB_TABLE_NAME"])
 
 
 def get_blog_content(url):
@@ -36,7 +38,7 @@ def get_blog_content(url):
     try:
         if url.lower().startswith(("http://", "https://")):
             # Use the `with` statement to ensure the response is properly closed
-            with urllib.request.urlopen(url) as response:
+            with urllib.request.urlopen(url) as response:  # nosec B310 # nosemgrep: dynamic-urllib-use-detected
                 html = response.read()
                 if response.getcode() == 200:
                     soup = BeautifulSoup(html, "html.parser")
@@ -49,7 +51,7 @@ def get_blog_content(url):
                         return None
 
         else:
-            print(f"Error accessing {url}, status code {response.getcode()}")
+            print(f"Error accessing {url}, unsupported URL scheme")
             return None
 
     except urllib.error.URLError as e:
@@ -122,91 +124,64 @@ def get_bedrock_client(
     return bedrock_client
 
 
-def summarize_blog(
-    blog_body,
-    language,
-    persona,
-):
-    """Summarize the content of a blog post
+def summarize_blog(blog_body, language, persona):
+    """Summarize the content of a blog post using Bedrock Converse API.
+
     Args:
         blog_body (str): The content of the blog post to be summarized
         language (str): The language for the summary
         persona (str): The persona to use for the summary
 
     Returns:
-        str: The summarized text
+        tuple: (summary, detail) strings
     """
-
     boto3_bedrock = get_bedrock_client(
         assumed_role=os.environ.get("BEDROCK_ASSUME_ROLE", None),
         region=MODEL_REGION,
     )
-    beginning_word = "<output>"
+
     prompt_data = f"""
 <input>{blog_body}</input>
 <persona>You are a professional {persona}. </persona>
-<instruction>Describe a new update in <input></input> tags in bullet points to describe "What is the new feature", "Who is this update good for". description shall be output in <thinking></thinking> tags and each thinking sentence must start with the bullet point "- " and end with "\n". Make final summary as per <summaryRule></summaryRule> tags. Try to shorten output for easy reading. You are not allowed to utilize any information except in the input. output format shall be in accordance with <outputFormat></outputFormat> tags.</instruction>
+<instruction>Describe a new update in <input></input> tags in bullet points to describe "What is the new feature", "Who is this update good for". description shall be output in <thinking></thinking> tags and each thinking sentence must start with the bullet point "- " and end with "\\n". Make final summary as per <summaryRule></summaryRule> tags. Try to shorten output for easy reading. You are not allowed to utilize any information except in the input. output format shall be in accordance with <outputFormat></outputFormat> tags.</instruction>
 <outputLanguage>In {language}.</outputLanguage>
 <summaryRule>The final summary must consists of 1 or 2 sentences. Output format is defined in <outputFormat></outputFormat> tags.</summaryRule>
-<outputFormat><thinking>(bullet points of the input)</thinking><summary>(final summary)</summary></outputFormat>
-Follow the instruction.
+<outputFormat><output><thinking>(bullet points of the input)</thinking><summary>(final summary)</summary></output></outputFormat>
+Follow the instruction. Start your response with <output>.
 """
 
-    max_tokens = 4096
+    messages = [{"role": "user", "content": [{"text": prompt_data}]}]
 
-    user_message = {
-        "role": "user",
-        "content": [
-            {
-                "type": "text",
-                "text": prompt_data,
-            }
-        ],
-    }
-
-    assistant_message = {
-        "role": "assistant",
-        "content": [{"type": "text", "text": f"{beginning_word}"}],
-    }
-
-    messages = [user_message, assistant_message]
-
-    body = json.dumps(
-        {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": max_tokens,
-            "messages": messages,
-            "temperature": 0.5,
-            "top_p": 1,
-            "top_k": 250,
-        }
-    )
-
-    accept = "application/json"
-    contentType = "application/json"
-    outputText = "\n"
-
-    try:
-        response = boto3_bedrock.invoke_model(
-            body=body, modelId=MODEL_ID, accept=accept, contentType=contentType
-        )
-        response_body = json.loads(response.get("body").read().decode())
-        outputText = beginning_word + response_body.get("content")[0]["text"]
-        print(outputText)
-        # extract contant inside <summary> tag
-        summary = re.findall(r"<summary>([\s\S]*?)</summary>", outputText)[0]
-        detail = re.findall(r"<thinking>([\s\S]*?)</thinking>", outputText)[0]
-    except ClientError as error:
-        if error.response["Error"]["Code"] == "AccessDeniedException":
-            print(
-                f"\x1b[41m{error.response['Error']['Message']}\
-            \nTo troubeshoot this issue please refer to the following resources.\ \nhttps://docs.aws.amazon.com/IAM/latest/UserGuide/troubleshoot_access-denied.html\
-            \nhttps://docs.aws.amazon.com/bedrock/latest/userguide/security-iam.html\x1b[0m\n"
+    for i, model_id in enumerate(MODEL_IDS):
+        try:
+            print(f"Trying model: {model_id}")
+            t0 = time.time()
+            response = boto3_bedrock.converse(
+                modelId=model_id,
+                messages=messages,
+                inferenceConfig={"maxTokens": 4096, "temperature": 0.5},
             )
-        else:
-            raise error
-
-    return summary, detail
+            elapsed = round(time.time() - t0, 2)
+            output_text = response["output"]["message"]["content"][0]["text"]
+            usage = response.get("usage", {})
+            metrics = {
+                "model_id": model_id,
+                "latency_sec": elapsed,
+                "input_tokens": usage.get("inputTokens", 0),
+                "output_tokens": usage.get("outputTokens", 0),
+            }
+            print(f"Model metrics: {json.dumps(metrics)}")
+            print(output_text)
+            summary = re.findall(r"<summary>([\s\S]*?)</summary>", output_text)[0]
+            detail = re.findall(r"<thinking>([\s\S]*?)</thinking>", output_text)[0]
+            return summary, detail, metrics
+        except ClientError as error:
+            if error.response["Error"]["Code"] == "AccessDeniedException":
+                raise
+            if i < len(MODEL_IDS) - 1:
+                print(f"Model {model_id} failed ({error.response['Error']['Code']}), falling back to next model")
+                continue
+            raise
 
 
 def push_notification(item_list):
@@ -234,11 +209,26 @@ def push_notification(item_list):
 
         # Summarize the blog
         summarizer = SUMMARIZERS[notifier["summarizerName"]]
-        summary, detail = summarize_blog(content, language=summarizer["outputLanguage"], persona=summarizer["persona"])
+        summary, detail, metrics = summarize_blog(content, language=summarizer["outputLanguage"], persona=summarizer["persona"])
 
         # Add the summary text to notified message
         item["summary"] = summary
         item["detail"] = detail
+
+        # Write summary back to DynamoDB
+        try:
+            ddb_table.update_item(
+                Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
+                UpdateExpression="SET summary = :s, detail = :d, summary_status = :st, model_id = :m, latency_sec = :l, input_tokens = :it, output_tokens = :ot",
+                ExpressionAttributeValues={
+                    ":s": summary, ":d": detail, ":st": "completed",
+                    ":m": metrics["model_id"], ":l": json.dumps(metrics["latency_sec"]),
+                    ":it": metrics["input_tokens"], ":ot": metrics["output_tokens"],
+                },
+            )
+        except Exception as e:
+            print(f"Failed to write summary to DDB: {e}")
+
         if destination == "teams":
             item["detail"] = item["detail"].replace("。\n", "。\r")
             msg = create_teams_message(item)
@@ -251,7 +241,7 @@ def push_notification(item_list):
             "Content-Type": "application/json",
         }
         req = urllib.request.Request(app_webhook_url, encoded_msg, headers)
-        with urllib.request.urlopen(req) as res:
+        with urllib.request.urlopen(req) as res:  # nosec B310 # nosemgrep: dynamic-urllib-use-detected
             print(res.read())
         time.sleep(0.5)
 
@@ -398,5 +388,5 @@ def handler(event, context):
         new_data = get_new_entries(event["Records"])
         if 0 < len(new_data):
             push_notification(new_data)
-    except Exception as e:
+    except Exception:
         print(traceback.print_exc())

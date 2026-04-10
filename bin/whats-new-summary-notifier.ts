@@ -1,22 +1,29 @@
 #!/usr/bin/env node
 import 'source-map-support/register';
 import * as cdk from 'aws-cdk-lib';
+import * as fs from 'fs';
 import { WhatsNewSummaryNotifierStack } from '../lib/whats-new-summary-notifier-stack';
 
 const app = new cdk.App();
-new WhatsNewSummaryNotifierStack(app, 'WhatsNewSummaryNotifierStack', {
+
+// Load external config file if specified: -c config=tenants/test.json
+// File values override cdk.json defaults (but explicit -c key=value still wins via CDK precedence).
+const configPath = app.node.tryGetContext('config');
+if (configPath && fs.existsSync(configPath)) {
+  const fileCtx = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  for (const [key, value] of Object.entries(fileCtx)) {
+    if (key !== 'config') {
+      app.node.setContext(key, value);
+    }
+  }
+}
+
+const tenant = app.node.tryGetContext('tenant') || '';
+const stackName = tenant ? `WhatsNewSummaryNotifier-${tenant}` : 'WhatsNewSummaryNotifierStack';
+
+new WhatsNewSummaryNotifierStack(app, stackName, {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION,
   },
-  /* If you don't specify 'env', this stack will be environment-agnostic.
-   * Account/Region-dependent features and context lookups will not work,
-   * but a single synthesized template can be deployed anywhere. */
-  /* Uncomment the next line to specialize this stack for the AWS Account
-   * and Region that are implied by the current CLI configuration. */
-  // env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: process.env.CDK_DEFAULT_REGION },
-  /* Uncomment the next line if you know exactly what Account and Region you
-   * want to deploy the stack to. */
-  // env: { account: '123456789012', region: 'us-east-1' },
-  /* For more information, see https://docs.aws.amazon.com/cdk/latest/guide/environments.html */
 });

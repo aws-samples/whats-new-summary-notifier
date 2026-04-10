@@ -15,22 +15,13 @@ This stack create following architecture.
 ![architecture](doc/architecture.png)
 
 ## Prerequisites
-- An environment where you can execute Unix commands (Mac, Linux, ...)
-  - If you don't have such an environment, you can also use AWS Cloud9. Please refer to [Preparing the Operating Environment (AWS Cloud9)](DEPLOY.md).
-- aws-cdk
-  - You can install it with `npm install -g aws-cdk`. For more details, please refer to the [AWS documentation](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html).
-- Docker
-  - Docker is required to build Lambda functions using the [`aws-lambda-python-alpha`](https://docs.aws.amazon.com/cdk/api/v2/docs/aws-lambda-python-alpha-readme.html) construct. Please refer to the [Docker documentation](https://docs.docker.com/engine/install/) for more information.
+- AWS Account with [CloudShell](https://console.aws.amazon.com/cloudshell/home) access
+- Webhook URL for Slack or Microsoft Teams
+- (For manual deploy only) Node.js 22+, Docker, [AWS CDK CLI](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html)
 
 ## Deployment Steps
-> [!IMPORTANT]
-> This repository is set up to use the Anthropic Claude 3 Sonnet model in the US East (N. Virginia) region (us-east-1) by default. Please open the [Model access screen (us-east-1)](https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess), check the Anthropic Claude 3 Sonnet option, and click Save changes.
 
-### Create Webhook URL 
-Create the Webhook URL required for the notifications.
-
-#### For Microsoft Teams
-First open the `cdk.json` file and change the `destination` value in the `context`-`notifiers` section from `slack` to `teams`. Then, refer to [this documentation](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook?tabs=newteams%2Cdotnet) to create the Webhook URL.
+### Create Webhook URL
 
 #### For Slack
 Refer to [this documentation](https://slack.com/help/articles/17542172840595-Build-a-workflow--Create-a-workflow-in-Slack) to create the Webhook URL. Select "Add a Variable" and create the following 5 variables, all with the Text data type:
@@ -41,45 +32,40 @@ Refer to [this documentation](https://slack.com/help/articles/17542172840595-Bui
 * `summary`: A summary of the article
 * `detail`: A bulleted description of the article
 
-### Create AWS Systems Manager Parameter Store 
+#### For Microsoft Teams
+Refer to [this documentation](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook?tabs=newteams%2Cdotnet) to create the Webhook URL.
 
-Use Parameter Store to securely store the notification URL.
+### Deploy
 
-#### Put into Parameter Store (AWS CLI)
+Open [CloudShell](https://console.aws.amazon.com/cloudshell/home) and run:
 
-```
-aws ssm put-parameter \
-  --name "/WhatsNew/URL" \
-  --type "SecureString" \
-  --value "<Input your Webhook URL >"
-```
-
-### Changing the Language Setting (Optional)
-This asset is set up to output summaries in Japanese (日本語) by default. If you want to generate output in other languages such as English, open the `cdk.json` file and change the `summarizerName` value inside the `notifiers` object within the `context` section from `AwsSolutionsArchitectJapanese` to `AwsSolutionsArchitectEnglish` or another language. For more information on other configuration options, please refer to the [Deployment Guide](DEPLOY.md). For more information on other configuration options, please refer to the [Deployment Guide](DEPLOY.md).
-
-### Execute the deployment
-**Initialize**
-
-If you haven't used CDK in this region before, run the following command:
-
-```
-cdk bootstrap
+```bash
+git clone https://github.com/aws-samples/whats-new-summary-notifier.git
+cd whats-new-summary-notifier
+bash deploy.sh
 ```
 
-**Verify no errors** 
-```
-cdk synth
-```
+The interactive wizard will guide you through selecting the notification destination (Slack/Teams), summary language, and entering your Webhook URL. Deployment runs via AWS CodeBuild automatically.
 
-**Execute Deployment** 
+For advanced configuration options including multi-tenant deployment, please refer to the [Deployment Guide](DEPLOY.md).
 
-```
-cdk deploy
+## Management Console
+
+A local web application for managing deployments, updating configurations, monitoring builds, and inspecting data. See the [Management Console Guide](CONSOLE.md) for details.
+
+```bash
+npm run dev:console
 ```
 
 ## Delete Stack
-If no longer needed, run the following command to delete the stack:
+
+Using deploy.sh (recommended):
+```bash
+bash deploy.sh --destroy
 ```
+
+Or manually:
+```bash
 cdk destroy
 ```
 By default, some resources such as the Amazon DynamoDB table are set to not be deleted.
