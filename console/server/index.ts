@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -45,6 +46,7 @@ import { execSync } from 'child_process';
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(rateLimit({ windowMs: 60 * 1000, max: 120 }));
 
 // Safely extract string from query param (may be string | string[] | undefined)
 const qs = (v: unknown): string => (Array.isArray(v) ? v[0] : v as string) ?? '';
