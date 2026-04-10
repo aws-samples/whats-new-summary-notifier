@@ -46,6 +46,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Safely extract string from query param (may be string | string[] | undefined)
+const qs = (v: unknown): string => (Array.isArray(v) ? v[0] : v as string) ?? '';
+
 // Deploy constants
 const PROJECT_PREFIX = 'whats-new-summary-notifier';
 const CODEBUILD_IMAGE = 'aws/codebuild/amazonlinux2-x86_64-standard:5.0';
@@ -55,7 +58,11 @@ const CACHE_DIR = path.resolve(__dirname, '../../tenants/.cache');
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
 function getCachePath(profile: string) {
-  return path.join(CACHE_DIR, `${profile.replace(/[^a-zA-Z0-9_+-]/g, '_')}.json`);
+  const safe = profile.replace(/[^a-zA-Z0-9_+-]/g, '_');
+  const p = path.join(CACHE_DIR, `${safe}.json`);
+  // Ensure resolved path stays within CACHE_DIR
+  if (!path.resolve(p).startsWith(path.resolve(CACHE_DIR))) throw new Error('Invalid profile name');
+  return p;
 }
 
 function readCache(profile: string) {
@@ -240,11 +247,12 @@ app.get('/api/ddb', async (req, res) => {
 app.post('/api/export-tenant', (req, res) => {
   const { tenant, region, accountId, config } = req.body;
   if (!config) return res.status(400).json({ error: 'config required' });
-  const dir = path.resolve(__dirname, '../../tenants/exported'); // nosemgrep: path-traversal
+  const dir = path.resolve(__dirname, '../../tenants/exported');
   fs.mkdirSync(dir, { recursive: true });
   const parts = [accountId || 'unknown', region || 'unknown', tenant || 'default'];
   const filename = `${parts.join('_').replace(/[^a-zA-Z0-9_+-]/g, '_')}.json`;
-  const filePath = path.join(dir, filename); // nosemgrep: path-traversal
+  const filePath = path.resolve(dir, filename);
+  if (!filePath.startsWith(dir)) return res.status(400).json({ error: 'Invalid path' }); // nosemgrep: path-traversal
   fs.writeFileSync(filePath, JSON.stringify(config, null, 2) + '\n');
   res.json({ path: `tenants/exported/${filename}` });
 });
@@ -537,7 +545,9 @@ app.post('/api/deploy/cleanup', async (req, res) => {
 
 // Build status
 app.get('/api/deploy/status', async (req, res) => {
-  const { buildId, profile = 'default', region } = req.query as Record<string, string>;
+  const buildId = qs(req.query.buildId);
+  const profile = qs(req.query.profile) || 'default';
+  const region = qs(req.query.region);
   if (!buildId) return res.status(400).json({ error: 'buildId required' });
   try {
     const credentials = fromIni({ profile });
@@ -558,7 +568,10 @@ app.get('/api/deploy/status', async (req, res) => {
 
 // Build logs
 app.get('/api/deploy/logs', async (req, res) => {
-  const { buildId, profile = 'default', nextToken, region } = req.query as Record<string, string>;
+  const buildId = qs(req.query.buildId);
+  const profile = qs(req.query.profile) || 'default';
+  const nextToken = qs(req.query.nextToken);
+  const region = qs(req.query.region);
   if (!buildId) return res.status(400).json({ error: 'buildId required' });
   try {
     const credentials = fromIni({ profile });
