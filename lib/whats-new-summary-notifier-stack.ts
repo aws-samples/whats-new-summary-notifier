@@ -1,5 +1,5 @@
 import { Construct } from 'constructs';
-import { Stack, StackProps, Duration } from 'aws-cdk-lib';
+import { Stack, StackProps, Duration, CfnOutput } from 'aws-cdk-lib';
 import { Table, AttributeType, BillingMode, StreamViewType } from 'aws-cdk-lib/aws-dynamodb';
 import { Rule, Schedule, RuleTargetInput, CronOptions } from 'aws-cdk-lib/aws-events';
 import { LambdaFunction } from 'aws-cdk-lib/aws-events-targets';
@@ -19,7 +19,8 @@ export class WhatsNewSummaryNotifierStack extends Stack {
     const accountId = Stack.of(this).account;
 
     const modelRegion = this.node.tryGetContext('modelRegion');
-    const modelId = this.node.tryGetContext('modelId');
+    const modelIds: string[] = this.node.tryGetContext('modelIds');
+    const commitHash: string = this.node.tryGetContext('commitHash') ?? 'local';
 
     const notifiers: [] = this.node.tryGetContext('notifiers');
     const summarizers: [] = this.node.tryGetContext('summarizers');
@@ -71,7 +72,7 @@ export class WhatsNewSummaryNotifierStack extends Stack {
 
     // Lambda Function to post new entries written to DynamoDB to Slack or Microsoft Teams
     const notifyNewEntry = new PythonFunction(this, 'NotifyNewEntry', {
-      runtime: Runtime.PYTHON_3_11,
+      runtime: Runtime.PYTHON_3_12,
       entry: path.join(__dirname, '../lambda/notify-to-app'),
       handler: 'handler',
       index: 'index.py',
@@ -80,8 +81,9 @@ export class WhatsNewSummaryNotifierStack extends Stack {
       role: notifyNewEntryRole,
       reservedConcurrentExecutions: 1,
       environment: {
-        MODEL_ID: modelId,
+        MODEL_IDS: JSON.stringify(modelIds),
         MODEL_REGION: modelRegion,
+        DDB_TABLE_NAME: rssHistoryTable.tableName,
         NOTIFIERS: JSON.stringify(notifiers),
         SUMMARIZERS: JSON.stringify(summarizers),
       },
@@ -96,10 +98,11 @@ export class WhatsNewSummaryNotifierStack extends Stack {
 
     // Allow writing to DynamoDB
     rssHistoryTable.grantWriteData(newsCrawlerRole);
+    rssHistoryTable.grantWriteData(notifyNewEntryRole);
 
     // Lambda Function to fetch RSS and write to DynamoDB
     const newsCrawler = new PythonFunction(this, `newsCrawler`, {
-      runtime: Runtime.PYTHON_3_11,
+      runtime: Runtime.PYTHON_3_12,
       entry: path.join(__dirname, '../lambda/rss-crawler'),
       handler: 'handler',
       index: 'index.py',
@@ -149,5 +152,7 @@ export class WhatsNewSummaryNotifierStack extends Stack {
         })
       );
     }
+
+    new CfnOutput(this, 'CommitHash', { value: commitHash });
   }
 }

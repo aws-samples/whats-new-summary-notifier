@@ -1,0 +1,35 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 22
+      python: 3.12
+    commands:
+      - npm install -g aws-cdk
+      - npm ci
+  build:
+    commands:
+      - |
+        CDK_ARGS=""
+        if [ -n "$TENANT" ]; then
+          CDK_ARGS="$CDK_ARGS -c tenant=$TENANT"
+        fi
+        if [ -n "$CONFIG_FILE" ]; then
+          CDK_ARGS="$CDK_ARGS -c config=$CONFIG_FILE"
+        fi
+        if [ -n "$CDK_CONTEXT_JSON" ]; then
+          # Write context JSON to a temp config file and pass via -c config=
+          GENERATED_CONFIG="/tmp/cdk-context-config.json"
+          echo "$CDK_CONTEXT_JSON" > "$GENERATED_CONFIG"
+          # Add tenant to the config file if set
+          if [ -n "$TENANT" ]; then
+            python3 -c "import json; d=json.load(open('$GENERATED_CONFIG')); d['tenant']='$TENANT'; json.dump(d,open('$GENERATED_CONFIG','w'),indent=2)"
+          fi
+          CDK_ARGS="$CDK_ARGS -c config=$GENERATED_CONFIG"
+        fi
+        echo "CDK deploy args: $CDK_ARGS"
+        COMMIT_HASH=${COMMIT_HASH:-${CODEBUILD_RESOLVED_SOURCE_VERSION:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}}
+        CDK_ARGS="$CDK_ARGS -c commitHash=$COMMIT_HASH"
+        npx cdk bootstrap
+        npx cdk deploy --require-approval never $CDK_ARGS

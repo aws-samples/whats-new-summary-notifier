@@ -16,3 +16,10 @@ __pycache__/
 # virtual env
 venv/
 ENV/
+
+# ASH (Automated Security Helper)
+*.ash
+
+# Exported tenant configs from console
+tenants/exported/
+tenants/.cache/

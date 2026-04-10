@@ -1,0 +1,13 @@
+{
+  "tenant": "test",
+  "notifiers": {
+    "AwsWhatsNew": {
+      "destination": "slack",
+      "summarizerName": "AwsSolutionsArchitectJapanese",
+      "webhookUrlParameterName": "/WhatsNew/URL/test",
+      "rssUrl": {
+        "What's new": "https://aws.amazon.com/about-aws/whats-new/recent/feed/"
+      }
+    }
+  }
+}
