@@ -240,11 +240,11 @@ app.get('/api/ddb', async (req, res) => {
 app.post('/api/export-tenant', (req, res) => {
   const { tenant, region, accountId, config } = req.body;
   if (!config) return res.status(400).json({ error: 'config required' });
-  const dir = path.resolve(__dirname, '../../tenants/exported');
+  const dir = path.resolve(__dirname, '../../tenants/exported'); // nosemgrep: path-traversal
   fs.mkdirSync(dir, { recursive: true });
   const parts = [accountId || 'unknown', region || 'unknown', tenant || 'default'];
-  const filename = `${parts.join('_')}.json`;
-  const filePath = path.join(dir, filename);
+  const filename = `${parts.join('_').replace(/[^a-zA-Z0-9_+-]/g, '_')}.json`;
+  const filePath = path.join(dir, filename); // nosemgrep: path-traversal
   fs.writeFileSync(filePath, JSON.stringify(config, null, 2) + '\n');
   res.json({ path: `tenants/exported/${filename}` });
 });
@@ -334,12 +334,12 @@ async function ensureS3Bucket(s3: S3Client, bucket: string) {
 }
 
 async function uploadSource(s3: S3Client, bucket: string, key: string): Promise<string> {
-  const zipData = execSync(
+  const zipData = execSync( // nosemgrep: dangerous-exec-cmd
     'zip -r - . -x ".git/*" "node_modules/*" "cdk.out/*" "console/*" ".cache/*" "tenants/.cache/*" ".ash/*" ".pytest_cache/*" ".ruff_cache/*" "__pycache__/*" "doc/*"',
     { cwd: PROJECT_ROOT, maxBuffer: 100 * 1024 * 1024 }
   );
   await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: zipData }));
-  try { return execSync('git rev-parse --short HEAD', { cwd: PROJECT_ROOT }).toString().trim(); } catch { return 'unknown'; }
+  try { return execSync('git rev-parse --short HEAD', { cwd: PROJECT_ROOT }).toString().trim(); } catch { return 'unknown'; } // nosemgrep: dangerous-exec-cmd
 }
 
 function buildDefaultConfig(destination: string, language: string, ssmParamName: string) {
