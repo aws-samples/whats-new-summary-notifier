@@ -122,6 +122,25 @@ def get_bedrock_client(
     return bedrock_client
 
 
+def clean_detail(detail):
+    """Normalize the bullet list so it renders as plain text in Slack and Teams
+
+    Removes literal "\\n" sequences and Markdown emphasis, drops blank lines and
+    heading-only bullets such as "- **New feature:**".
+
+    Args:
+        detail (str): The bullet points returned by the model
+    """
+    lines = []
+    for line in detail.replace("\\n", "\n").splitlines():
+        line = line.replace("**", "").strip()
+        body = line.lstrip("-・* ").strip()
+        if not body or (body.endswith((":", "：")) and len(body) <= 30):
+            continue
+        lines.append(f"- {body}")
+    return "\n".join(lines)
+
+
 def summarize_blog(blog_body, language, persona):
     """Summarize the content of a blog post using Bedrock Converse API.
 
@@ -141,10 +160,10 @@ def summarize_blog(blog_body, language, persona):
     prompt_data = f"""
 <input>{blog_body}</input>
 <persona>You are a professional {persona}. </persona>
-<instruction>Describe a new update in <input></input> tags in bullet points to describe "What is the new feature", "Who is this update good for". description shall be output in <thinking></thinking> tags and each thinking sentence must start with the bullet point "- " and end with "\\n". Make final summary as per <summaryRule></summaryRule> tags. Try to shorten output for easy reading. You are not allowed to utilize any information except in the input. output format shall be in accordance with <outputFormat></outputFormat> tags.</instruction>
+<instruction>Describe a new update in <input></input> tags in bullet points to describe "What is the new feature", "Who is this update good for". description shall be output in <detail></detail> tags. Write each point on its own line starting with the bullet point "- ". Use plain text only: no Markdown (no bold, no headings) and no escape sequences. Do not add section titles or label-only lines; every line must be a complete sentence. Make final summary as per <summaryRule></summaryRule> tags. Try to shorten output for easy reading. You are not allowed to utilize any information except in the input. output format shall be in accordance with <outputFormat></outputFormat> tags.</instruction>
 <outputLanguage>In {language}.</outputLanguage>
 <summaryRule>The final summary must consists of 1 or 2 sentences. Output format is defined in <outputFormat></outputFormat> tags.</summaryRule>
-<outputFormat><output><thinking>(bullet points of the input)</thinking><summary>(final summary)</summary></output></outputFormat>
+<outputFormat><output><detail>(bullet points of the input)</detail><summary>(final summary)</summary></output></outputFormat>
 Follow the instruction. Start your response with <output>.
 """
 
@@ -157,10 +176,12 @@ Follow the instruction. Start your response with <output>.
             response = boto3_bedrock.converse(
                 modelId=model_id,
                 messages=messages,
-                inferenceConfig={"maxTokens": 4096, "temperature": 0.5},
+                inferenceConfig={"maxTokens": 4096},
             )
             elapsed = round(time.time() - t0, 2)
-            output_text = response["output"]["message"]["content"][0]["text"]
+            # Newer models may return a reasoningContent block before the text block
+            content = response["output"]["message"]["content"]
+            output_text = "".join(block["text"] for block in content if "text" in block)
             usage = response.get("usage", {})
             metrics = {
                 "model_id": model_id,
@@ -170,14 +191,20 @@ Follow the instruction. Start your response with <output>.
             }
             print(f"Model metrics: {json.dumps(metrics)}")
             print(output_text)
-            summary = re.findall(r"<summary>([\s\S]*?)</summary>", output_text)[0]
-            detail = re.findall(r"<thinking>([\s\S]*?)</thinking>", output_text)[0]
-            return summary, detail, metrics
-        except ClientError as error:
-            if error.response["Error"]["Code"] == "AccessDeniedException":
-                raise
+            summary = re.findall(r"<summary>([\s\S]*?)</summary>", output_text)
+            detail = re.findall(r"<detail>([\s\S]*?)</detail>", output_text)
+            if not summary or not detail:
+                raise ValueError(f"unexpected output (stopReason={response.get('stopReason')})")
+            return summary[0].strip(), clean_detail(detail[0]), metrics
+        except (ClientError, ValueError) as error:
+            if isinstance(error, ClientError):
+                if error.response["Error"]["Code"] == "AccessDeniedException":
+                    raise
+                reason = error.response["Error"]["Code"]
+            else:
+                reason = str(error)
             if i < len(MODEL_IDS) - 1:
-                print(f"Model {model_id} failed ({error.response['Error']['Code']}), falling back to next model")
+                print(f"Model {model_id} failed ({reason}), falling back to next model")
                 continue
             raise
 

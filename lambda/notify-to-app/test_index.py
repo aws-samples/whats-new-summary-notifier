@@ -129,3 +129,74 @@ class TestModelIds:
         assert len(index.MODEL_IDS) == 2
         assert index.MODEL_IDS[0] == "model-a"
         assert index.MODEL_IDS[1] == "model-b"
+
+
+class _FakeClientError(Exception):
+    def __init__(self, code):
+        super().__init__(code)
+        self.response = {"Error": {"Code": code}}
+
+
+class TestSummarizeBlog:
+    """Test summarize_blog response parsing and model fallback."""
+
+    OUTPUT = "<output><detail>- point\\n</detail><summary>short summary</summary></output>"
+
+    def _run(self, monkeypatch, responses):
+        client = MagicMock()
+        client.converse.side_effect = responses
+        monkeypatch.setattr(index, "get_bedrock_client", lambda **_: client)
+        monkeypatch.setattr(index, "ClientError", _FakeClientError)
+        return index.summarize_blog("body", "English.", "engineer"), client
+
+    @staticmethod
+    def _response(content, stop_reason="end_turn"):
+        return {"output": {"message": {"content": content}}, "stopReason": stop_reason, "usage": {}}
+
+    def test_skips_reasoning_block(self, monkeypatch):
+        reasoning = {"reasoningContent": {"reasoningText": {"text": "", "signature": "x"}}}
+        (summary, detail, metrics), _ = self._run(
+            monkeypatch, [self._response([reasoning, {"text": self.OUTPUT}])]
+        )
+        assert summary == "short summary"
+        assert detail == "- point"
+        assert metrics["model_id"] == "model-a"
+
+    def test_falls_back_when_output_is_empty(self, monkeypatch):
+        (summary, _, metrics), client = self._run(
+            monkeypatch,
+            [self._response([], "content_filtered"), self._response([{"text": self.OUTPUT}])],
+        )
+        assert summary == "short summary"
+        assert metrics["model_id"] == "model-b"
+        assert client.converse.call_count == 2
+
+    def test_falls_back_on_validation_error(self, monkeypatch):
+        (_, _, metrics), _ = self._run(
+            monkeypatch,
+            [_FakeClientError("ValidationException"), self._response([{"text": self.OUTPUT}])],
+        )
+        assert metrics["model_id"] == "model-b"
+
+    def test_does_not_send_temperature(self, monkeypatch):
+        _, client = self._run(monkeypatch, [self._response([{"text": self.OUTPUT}])])
+        assert "temperature" not in client.converse.call_args.kwargs["inferenceConfig"]
+
+
+class TestCleanDetail:
+    """Test clean_detail removes artifacts that render badly in Slack."""
+
+    def test_removes_literal_newlines_markdown_and_headings(self):
+        raw = (
+            "\n- **新機能について：**\n"
+            "- UIが利用可能になりました。\\n\n"
+            "- **CloudTrail** で記録されます。\\n\n"
+            "\n- **対象ユーザーについて：**\n"
+            "- 運用チームに適しています。\\n\n"
+        )
+        assert index.clean_detail(raw) == (
+            "- UIが利用可能になりました。\n- CloudTrail で記録されます。\n- 運用チームに適しています。"
+        )
+
+    def test_keeps_plain_bullets(self):
+        assert index.clean_detail("- a\n- b") == "- a\n- b"
