@@ -1,19 +1,17 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-import boto3
 import json
 import os
+import re
 import time
 import traceback
-
 import urllib.request
 
-from typing import Optional
+import boto3
 from botocore.config import Config
-from bs4 import BeautifulSoup
 from botocore.exceptions import ClientError
-import re
+from bs4 import BeautifulSoup
 
 MODEL_IDS = json.loads(os.environ["MODEL_IDS"])
 MODEL_REGION = os.environ["MODEL_REGION"]
@@ -60,9 +58,9 @@ def get_blog_content(url):
 
 
 def get_bedrock_client(
-    assumed_role: Optional[str] = None,
-    region: Optional[str] = None,
-    runtime: Optional[bool] = True,
+    assumed_role: str | None = None,
+    region: str | None = None,
+    runtime: bool | None = True,
 ):
     """Create a boto3 client for Amazon Bedrock, with optional configuration overrides
 
@@ -226,7 +224,7 @@ def push_notification(item_list):
                     ":it": metrics["input_tokens"], ":ot": metrics["output_tokens"],
                 },
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a failed summary write must not block the notification
             print(f"Failed to write summary to DDB: {e}")
 
         if destination == "teams":
@@ -236,7 +234,7 @@ def push_notification(item_list):
             msg = item
 
         encoded_msg = json.dumps(msg).encode("utf-8")
-        print("push_msg:{}".format(item))
+        print(f"push_msg:{item}")
         headers = {
             "Content-Type": "application/json",
         }
@@ -388,5 +386,5 @@ def handler(event, context):
         new_data = get_new_entries(event["Records"])
         if 0 < len(new_data):
             push_notification(new_data)
-    except Exception:
+    except Exception:  # noqa: BLE001 - top-level handler logs every failure
         print(traceback.print_exc())

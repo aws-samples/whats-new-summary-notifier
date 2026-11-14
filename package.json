@@ -9,11 +9,11 @@
     "watch": "tsc -w",
     "test": "npm run test:ts && npm run test:py",
     "test:ts": "jest",
-    "test:py": "uv run --with pytest --with beautifulsoup4 --with boto3 pytest lambda/ -v",
+    "test:py": "uv run --with pytest==9.2.0 --with beautifulsoup4 --with boto3 pytest lambda/ -v",
     "lint": "npm run lint:ts && npm run lint:py",
     "lint:ts": "eslint lib/ bin/ test/",
-    "lint:py": "uv run --with ruff ruff check lambda/ --per-file-ignores='**/test_*.py:E402'",
-    "format": "prettier --write '**/*.{ts,json,md}' --ignore-path .prettierignore && uv run --with ruff ruff format lambda/",
+    "lint:py": "uv run --with ruff==0.17.5 ruff check lambda/ --per-file-ignores='**/test_*.py:E402'",
+    "format": "prettier --write '**/*.{ts,json,md}' --ignore-path .prettierignore && uv run --with ruff==0.17.5 ruff format lambda/",
     "cdk": "cdk",
     "dev:console": "cd console && npm run dev"
   },
@@ -21,7 +21,7 @@
     "@eslint/js": "^9.39.4",
     "@types/jest": "^30.0.0",
     "@types/node": "^22.15.0",
-    "aws-cdk": "^2.248.0",
+    "aws-cdk": "^2.1148.1",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.4.0",
@@ -33,8 +33,8 @@
     "typescript-eslint": "^8.58.1"
   },
   "dependencies": {
-    "@aws-cdk/aws-lambda-python-alpha": "^2.248.0-alpha.0",
-    "aws-cdk-lib": "^2.248.0",
+    "@aws-cdk/aws-lambda-python-alpha": "^2.277.0-alpha.0",
+    "aws-cdk-lib": "^2.277.0",
     "cdk-nag": "^2.37.55",
     "constructs": "^10.6.0",
     "source-map-support": "^0.5.21"
