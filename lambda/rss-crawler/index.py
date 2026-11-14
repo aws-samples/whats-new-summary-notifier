@@ -1,12 +1,14 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
-import boto3
 import datetime
-import feedparser
 import json
 import os
+
+import boto3
 import dateutil.parser
+import feedparser
+from botocore.exceptions import ClientError
 
 # CRAWL_BLOG_URL = json.loads(os.environ["RSS_URL"])
 # NOTIFIERS = json.loads(os.environ["NOTIFIERS"])
@@ -25,10 +27,7 @@ def recently_published(pubdate):
 
     elapsed_time = datetime.datetime.now() - str2datetime(pubdate)
     print(elapsed_time)
-    if elapsed_time.days > 7:
-        return False
-
-    return True
+    return elapsed_time.days <= 7
 
 
 def str2datetime(time_str):
@@ -60,13 +59,13 @@ def write_to_table(link, title, category, pubtime, notifier_name):
         }
         print(item)
         table.put_item(Item=item)
-    except Exception as e:
+    except ClientError as e:
         # Intentional error handling for duplicates to continue
         if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
             print("Duplicate item put: " + title)
         else:
             # Continue for other errors
-            print(e.message)
+            print(e)
 
 
 def add_blog(rss_name, entries, notifier_name):
