@@ -72,7 +72,7 @@ export class WhatsNewSummaryNotifierStack extends Stack {
 
     // Lambda Function to post new entries written to DynamoDB to Slack or Microsoft Teams
     const notifyNewEntry = new PythonFunction(this, 'NotifyNewEntry', {
-      runtime: Runtime.PYTHON_3_12,
+      runtime: Runtime.PYTHON_3_14,
       entry: path.join(__dirname, '../lambda/notify-to-app'),
       handler: 'handler',
       index: 'index.py',
@@ -102,7 +102,7 @@ export class WhatsNewSummaryNotifierStack extends Stack {
 
     // Lambda Function to fetch RSS and write to DynamoDB
     const newsCrawler = new PythonFunction(this, `newsCrawler`, {
-      runtime: Runtime.PYTHON_3_12,
+      runtime: Runtime.PYTHON_3_14,
       entry: path.join(__dirname, '../lambda/rss-crawler'),
       handler: 'handler',
       index: 'index.py',

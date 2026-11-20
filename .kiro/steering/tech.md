@@ -3,10 +3,10 @@
 ## IaC / インフラ
 - AWS CDK v2（TypeScript）— aws-cdk-lib ^2.248.0
 - `@aws-cdk/aws-lambda-python-alpha` で Python Lambda をビルド（Docker 必須）
-- CodeBuild によるリモートデプロイ（deploy.sh 経由）
+- CodeBuild によるリモートデプロイ（deploy.sh 経由、イメージ `aws/codebuild/amazonlinux-x86_64-standard:6.0`、CDK CLI は package.json の `aws-cdk` を `npx cdk` で使用）
 
 ## Lambda ランタイム
-- Python 3.11（Lambda）/ Python 3.12（CodeBuild）
+- Python 3.14（Lambda）/ Python 3.14（CodeBuild）
 - 依存管理: 各 Lambda ディレクトリの `requirements.txt`
 
 ## 主要 AWS サービス
