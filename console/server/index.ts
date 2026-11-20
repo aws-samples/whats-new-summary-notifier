@@ -1,5 +1,4 @@
 import express from 'express';
-import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -51,8 +50,22 @@ import {
 } from '@aws-sdk/client-s3';
 import { execSync } from 'child_process';
 
+const API_PORT = 3456;
+const UI_PORT = 5173;
+const LOCAL_HOSTS = new Set(
+  ['localhost', '127.0.0.1'].flatMap((h) => [`${h}:${API_PORT}`, `${h}:${UI_PORT}`])
+);
+const LOCAL_ORIGINS = new Set([`http://localhost:${UI_PORT}`, `http://127.0.0.1:${UI_PORT}`]);
+
 const app = express();
-app.use(cors());
+// Serve only the local UI: reject other Host headers (DNS rebinding) and cross-site origins
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (!LOCAL_HOSTS.has(req.headers.host ?? '') || (origin && !LOCAL_ORIGINS.has(origin))) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  next();
+});
 app.use(express.json());
 app.use(rateLimit({ windowMs: 60 * 1000, max: 120 }));
 
@@ -735,6 +748,7 @@ app.get('/api/bedrock/models', async (req, res) => {
   }
 });
 
-app.listen(3456, () =>
-  console.log('API server: http://localhost:3456\nOpen http://localhost:5173 in your browser')
+// Loopback only: the API uses your AWS credentials and has no authentication
+app.listen(API_PORT, '127.0.0.1', () =>
+  console.log(`API server: http://127.0.0.1:${API_PORT}\nOpen http://localhost:${UI_PORT} in your browser`)
 );

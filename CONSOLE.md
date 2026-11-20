@@ -107,7 +107,7 @@ Click **📤 Export** to save the stack's configuration as a JSON file to `tenan
 
 The Management Console runs entirely on your local machine:
 
-1. **Express API server** (port 3456) uses your AWS CLI credentials via `fromIni()` to call AWS APIs
+1. **Express API server** (port 3456) uses your AWS CLI credentials via `fromIni()` to call AWS APIs. It listens on `127.0.0.1` only and accepts requests only from the local UI (port 5173 or 3456 on `localhost` / `127.0.0.1`)
 2. **React frontend** (port 5173) proxies API requests to the Express server
 3. **Deploy flow**: Local source code is zipped (excluding `.git`, `node_modules`, etc.) → uploaded to S3 → CodeBuild project created/updated → build started with CDK context as environment variables. Destroy uploads the source the same way before starting its build.
 4. **No data leaves your machine** except AWS API calls to your own account
