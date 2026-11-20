@@ -26,7 +26,8 @@
 - ASH（Automated Security Helper）— CI でセキュリティスキャン
 
 ## Management Console（ローカル管理ツール）
-- React 19 + Tailwind CSS 4 + Vite 6（フロントエンド）
+- React 19 + Tailwind CSS 4 + Vite 8（フロントエンド）
+- Node.js 22.12+（Vite 8 と @vitejs/plugin-react 6 の要件）
 - Express 5 + tsx（バックエンド API サーバー）
 - AWS SDK v3 でローカルの AWS CLI プロファイルを使用
 

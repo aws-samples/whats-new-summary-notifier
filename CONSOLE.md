@@ -6,7 +6,7 @@ The Management Console is a local web application for managing Whats New Summary
 
 ## Prerequisites
 
-- Node.js 22+
+- Node.js 22.12+
 - AWS CLI configured with one or more named profiles
 - The profile must have permissions for CloudFormation, Lambda, DynamoDB, SSM, CodeBuild, IAM, S3, and Bedrock
 
