@@ -21,7 +21,6 @@
     "@aws-sdk/credential-provider-ini": "^3.972.0",
     "@smithy/shared-ini-file-loader": "^4.4.8",
     "@tailwindcss/vite": "^4.2.2",
-    "cors": "^2.8.5",
     "express": "^5.1.0",
     "express-rate-limit": "^8.7.4",
     "react": "^19.1.0",
@@ -29,7 +28,6 @@
     "tailwindcss": "^4.2.2"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",

@@ -105,10 +105,29 @@ npm run dev:console
 
 Management Console はすべてローカルマシン上で動作します:
 
-1. **Express API サーバー**（ポート 3456）が `fromIni()` で AWS CLI 認証情報を使用して AWS API を呼び出します
+1. **Express API サーバー**（ポート 3456）が `fromIni()` で AWS CLI 認証情報を使用して AWS API を呼び出します。サーバーは `127.0.0.1` だけで待ち受け、ローカルの UI（`localhost` / `127.0.0.1` のポート 5173 または 3456）からのリクエストだけを受け付けます
 2. **React フロントエンド**（ポート 5173）が API リクエストを Express サーバーにプロキシします
-3. **デプロイフロー**: ローカルのソースコードを zip 化（`.git`, `node_modules` 等を除外）→ S3 にアップロード → CodeBuild プロジェクトを作成/更新 → CDK コンテキストを環境変数としてビルド開始
+3. **デプロイフロー**: ローカルのソースコードを zip 化（`.git`, `node_modules` 等を除外）→ S3 にアップロード → CodeBuild プロジェクトを作成/更新 → CDK コンテキストを環境変数としてビルド開始。削除（Destroy）でも、ビルドを始める前に同じようにソースをアップロードします
 4. AWS API 呼び出し以外に**データがマシン外に出ることはありません**
+
+## ソースバケット
+
+コンソールはソースの zip を `wnsn-deploy-<アカウント ID>-<リージョン>-an` にアップロードします。これは [S3 のアカウントリージョナル名前空間](https://docs.aws.amazon.com/ja_jp/AmazonS3/latest/userguide/gpbucketnamespaces.html)のバケットで、自分のアカウントだけが作成できます。このバケットへの S3 リクエストではすべて、バケットが自分のアカウントのものであることを確かめ、そうでなければデプロイを止めます。
+
+- リージョンで初めて使うとき、コンソールはバケットを作成し、ブロックパブリックアクセスの 4 つの設定と、`source/` 以下の zip を 7 日後に削除するルールを付けます。この処理には、プロファイルに `s3:CreateBucket`、`s3:PutBucketPublicAccessBlock`、`s3:PutLifecycleConfiguration` の権限が必要です。
+- 中東（バーレーン）`me-south-1` と中東（UAE）`me-central-1` ではアカウントリージョナル名前空間を使えません。これらのリージョンではコンソールからのデプロイは止まります。GitHub のソースからビルドする `deploy.sh`（[DEPLOY_ja.md](DEPLOY_ja.md) 参照）を使ってください。
+
+### 以前のバージョンのコンソールでデプロイした場合
+
+以前のバージョンは `wnsn-deploy-<アカウント ID>-<リージョン>`（`-an` なし）を使っていました。デプロイ済みのスタックはこのバケットを使わないため、そのまま動き続けます。次にコンソールからデプロイ・更新・削除を行うと、新しいバケットが使われます。その後は古いバケットを削除してかまいません。
+
+古いバケットが自分のアカウントのものか確かめるには、次を実行します。
+
+```bash
+aws s3api head-bucket --bucket wnsn-deploy-<アカウント ID>-<リージョン> --expected-bucket-owner <アカウント ID> --region <リージョン>
+```
+
+`403`（Forbidden）が返った場合、そのバケットは自分のアカウントのものではないか、アクセスできません。そのリージョンの `whats-new-summary-notifier*` CodeBuild プロジェクトのビルド履歴と、`whats-new-summary-notifier*-role` IAM ロールの CloudTrail のアクティビティを確認してください。`404`（Not Found）はバケットが存在しないことを示します。
 
 ## 設定の優先順位
 
