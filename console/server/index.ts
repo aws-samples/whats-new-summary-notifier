@@ -448,7 +448,10 @@ app.post('/api/deploy', async (req, res) => {
     const defaultRegion = (sts.config as any)?.region?.() ?? 'us-east-1';
     const resolvedRegion = reqRegion || (typeof defaultRegion === 'string' ? defaultRegion : await defaultRegion);
 
-    // 1. Store webhook URL in SSM (skip if using existing)
+    // 1. Check the source bucket owner and upload source first, so a stop here creates nothing else
+    const { bucket, key, commitHash } = await prepareSource(credentials, Account!, resolvedRegion);
+
+    // 2. Store webhook URL in SSM (skip if using existing)
     if (!skipSsm && webhookUrl) {
       const ssm = new SSMClient({ region: resolvedRegion, credentials });
       await ssm.send(new PutParameterCommand({
@@ -456,12 +459,9 @@ app.post('/api/deploy', async (req, res) => {
       }));
     }
 
-    // 2. Ensure IAM role
+    // 3. Ensure IAM role and CodeBuild project
     const iam = new IAMClient({ region: resolvedRegion, credentials });
     const roleArn = await ensureIamRole(iam, roleName);
-
-    // 3. Upload source to S3 and ensure CodeBuild project
-    const { bucket, key, commitHash } = await prepareSource(credentials, Account!, resolvedRegion);
     const cb = new CodeBuildClient({ region: resolvedRegion, credentials });
     await ensureCodeBuildProject(cb, cbProjectName, roleArn, bucket, key);
 
@@ -492,17 +492,16 @@ app.post('/api/deploy/update', async (req, res) => {
   const targetRegion = region || 'us-east-1';
 
   try {
+    // Re-upload source first (checks the bucket owner), then update SSM and the project
+    const sts = new STSClient({ credentials });
+    const { Account } = await sts.send(new GetCallerIdentityCommand({}));
+    const { bucket, key, commitHash } = await prepareSource(credentials, Account!, targetRegion);
     if (!skipSsm && webhookUrl) {
       const ssm = new SSMClient({ region: targetRegion, credentials });
       await ssm.send(new PutParameterCommand({
         Name: ssmParamName, Type: 'SecureString', Value: webhookUrl, Overwrite: true,
       }));
     }
-
-    // Re-upload source and update project
-    const sts = new STSClient({ credentials });
-    const { Account } = await sts.send(new GetCallerIdentityCommand({}));
-    const { bucket, key, commitHash } = await prepareSource(credentials, Account!, targetRegion);
     const iam = new IAMClient({ region: targetRegion, credentials });
     const roleArn = await ensureIamRole(iam, deriveNames(tenant).roleName);
     const cb = new CodeBuildClient({ region: targetRegion, credentials });
