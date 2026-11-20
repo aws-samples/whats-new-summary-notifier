@@ -109,8 +109,27 @@ The Management Console runs entirely on your local machine:
 
 1. **Express API server** (port 3456) uses your AWS CLI credentials via `fromIni()` to call AWS APIs
 2. **React frontend** (port 5173) proxies API requests to the Express server
-3. **Deploy flow**: Local source code is zipped (excluding `.git`, `node_modules`, etc.) → uploaded to S3 → CodeBuild project created/updated → build started with CDK context as environment variables
+3. **Deploy flow**: Local source code is zipped (excluding `.git`, `node_modules`, etc.) → uploaded to S3 → CodeBuild project created/updated → build started with CDK context as environment variables. Destroy uploads the source the same way before starting its build.
 4. **No data leaves your machine** except AWS API calls to your own account
+
+## Source Bucket
+
+The console uploads the source zip to `wnsn-deploy-<account-id>-<region>-an`, a bucket in the [S3 account regional namespace](https://docs.aws.amazon.com/AmazonS3/latest/userguide/gpbucketnamespaces.html) that only your account can create. Every S3 request to this bucket checks that it is owned by your account, and the deploy stops if it is not.
+
+- On first use in a Region, the console creates the bucket with all four Block Public Access settings and a rule that deletes source zips under `source/` after 7 days. The profile needs `s3:CreateBucket`, `s3:PutBucketPublicAccessBlock`, and `s3:PutLifecycleConfiguration` for this step.
+- The account regional namespace is not available in Middle East (Bahrain) `me-south-1` and Middle East (UAE) `me-central-1`. Console deploys stop in these Regions; use `deploy.sh` (see [DEPLOY.md](DEPLOY.md)), which builds from the GitHub source.
+
+### If you deployed with an earlier version of the console
+
+Earlier versions used `wnsn-deploy-<account-id>-<region>` (without `-an`). Deployed stacks do not use this bucket and keep working. Your next deploy, update, or destroy from the console uses the new bucket. After that, you can delete the old bucket.
+
+To confirm the old bucket belongs to your account, run:
+
+```bash
+aws s3api head-bucket --bucket wnsn-deploy-<account-id>-<region> --expected-bucket-owner <account-id> --region <region>
+```
+
+If this returns `403` (Forbidden), the bucket is not owned by your account or you cannot access it. Review the build history of the `whats-new-summary-notifier*` CodeBuild projects and the CloudTrail activity of the `whats-new-summary-notifier*-role` IAM roles in that Region. A `404` (Not Found) means the bucket does not exist.
 
 ## Configuration Priority
 

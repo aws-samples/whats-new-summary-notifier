@@ -40,7 +40,15 @@ import {
 } from '@aws-sdk/client-iam';
 import { CloudWatchLogsClient, GetLogEventsCommand } from '@aws-sdk/client-cloudwatch-logs';
 import { BedrockClient, ListFoundationModelsCommand, ListInferenceProfilesCommand } from '@aws-sdk/client-bedrock';
-import { S3Client, CreateBucketCommand, PutObjectCommand, HeadBucketCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  CreateBucketCommand,
+  PutObjectCommand,
+  HeadBucketCommand,
+  PutPublicAccessBlockCommand,
+  PutBucketLifecycleConfigurationCommand,
+  type BucketLocationConstraint,
+} from '@aws-sdk/client-s3';
 import { execSync } from 'child_process';
 
 const app = express();
@@ -335,20 +343,55 @@ async function ensureCodeBuildProject(cb: CodeBuildClient, name: string, roleArn
   }
 }
 
-async function ensureS3Bucket(s3: S3Client, bucket: string) {
-  try {
-    await s3.send(new HeadBucketCommand({ Bucket: bucket }));
-  } catch {
-    await s3.send(new CreateBucketCommand({ Bucket: bucket }));
+// Regions where S3 account regional namespace buckets cannot be created
+const UNSUPPORTED_SOURCE_REGIONS = new Set(['me-south-1', 'me-central-1']);
+
+// Source bucket in the account regional namespace: only this account can create it
+function sourceBucketName(accountId: string, region: string) {
+  if (UNSUPPORTED_SOURCE_REGIONS.has(region)) {
+    throw new Error(`Console deploy is not supported in ${region}. Use deploy.sh instead (see DEPLOY.md).`);
   }
+  return `wnsn-deploy-${accountId}-${region}-an`;
 }
 
-async function uploadSource(s3: S3Client, bucket: string, key: string): Promise<string> {
+async function ensureS3Bucket(s3: S3Client, bucket: string, accountId: string, region: string) {
+  try {
+    await s3.send(new HeadBucketCommand({ Bucket: bucket, ExpectedBucketOwner: accountId }));
+    return;
+  } catch (e: any) {
+    const status = e.$metadata?.httpStatusCode;
+    if (status === 403) {
+      throw new Error(`Source bucket ${bucket} is not owned by account ${accountId} or is not accessible. Deploy stopped.`);
+    }
+    if (status !== 404) throw e;
+  }
+  await s3.send(new CreateBucketCommand({
+    Bucket: bucket,
+    BucketNamespace: 'account-regional',
+    ...(region === 'us-east-1' ? {} : { CreateBucketConfiguration: { LocationConstraint: region as BucketLocationConstraint } }),
+  }));
+  await s3.send(new PutPublicAccessBlockCommand({
+    Bucket: bucket,
+    ExpectedBucketOwner: accountId,
+    PublicAccessBlockConfiguration: {
+      BlockPublicAcls: true, IgnorePublicAcls: true, BlockPublicPolicy: true, RestrictPublicBuckets: true,
+    },
+  }));
+  await s3.send(new PutBucketLifecycleConfigurationCommand({
+    Bucket: bucket,
+    ExpectedBucketOwner: accountId,
+    LifecycleConfiguration: {
+      Rules: [{ ID: 'expire-source', Status: 'Enabled', Filter: { Prefix: 'source/' }, Expiration: { Days: 7 } }],
+    },
+  }));
+}
+
+async function uploadSource(s3: S3Client, bucket: string, key: string, accountId: string): Promise<string> {
   const zipData = execSync( // nosemgrep: dangerous-exec-cmd
     'zip -r - . -x ".git/*" "node_modules/*" "cdk.out/*" "console/*" ".cache/*" "tenants/.cache/*" ".ash/*" ".pytest_cache/*" ".ruff_cache/*" "__pycache__/*" "doc/*"',
     { cwd: PROJECT_ROOT, maxBuffer: 100 * 1024 * 1024 }
   );
-  await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: zipData }));
+  await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: zipData, ExpectedBucketOwner: accountId }));
   try { return execSync('git rev-parse --short HEAD', { cwd: PROJECT_ROOT }).toString().trim(); } catch { return 'unknown'; } // nosemgrep: dangerous-exec-cmd
 }
 
@@ -370,11 +413,11 @@ function buildDefaultConfig(destination: string, language: string, ssmParamName:
 
 // Helper: upload source and get S3 location
 async function prepareSource(credentials: ReturnType<typeof fromIni>, accountId: string, region: string) {
+  const bucket = sourceBucketName(accountId, region);
   const s3 = new S3Client({ region, credentials });
-  const bucket = `wnsn-deploy-${accountId}-${region}`;
   const key = `source/${Date.now()}.zip`;
-  await ensureS3Bucket(s3, bucket);
-  const commitHash = await uploadSource(s3, bucket, key);
+  await ensureS3Bucket(s3, bucket, accountId, region);
+  const commitHash = await uploadSource(s3, bucket, key, accountId);
   return { bucket, key, commitHash };
 }
 
@@ -484,6 +527,10 @@ app.post('/api/deploy/destroy', async (req, res) => {
   const targetRegion = region || 'us-east-1';
 
   try {
+    // Upload the current source so the build never runs a zip left by an earlier deploy
+    const sts = new STSClient({ credentials });
+    const { Account } = await sts.send(new GetCallerIdentityCommand({}));
+    const { bucket, key } = await prepareSource(credentials, Account!, targetRegion);
     const cb = new CodeBuildClient({ region: targetRegion, credentials });
     const destroyBuildspec = [
       'version: 0.2',
@@ -504,6 +551,8 @@ app.post('/api/deploy/destroy', async (req, res) => {
 
     const { build } = await cb.send(new StartBuildCommand({
       projectName: cbProjectName,
+      sourceTypeOverride: 'S3',
+      sourceLocationOverride: `${bucket}/${key}`,
       buildspecOverride: destroyBuildspec,
       environmentVariablesOverride: [
         { name: 'TENANT', value: actualTenant, type: 'PLAINTEXT' },
