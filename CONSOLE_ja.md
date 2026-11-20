@@ -4,7 +4,7 @@ Management Console は、Whats New Summary Notifier のデプロイを管理す�
 
 ## 前提条件
 
-- Node.js 22+
+- Node.js 22.12+
 - AWS CLI が 1 つ以上の名前付きプロファイルで設定済み
 - プロファイルに CloudFormation, Lambda, DynamoDB, SSM, CodeBuild, IAM, S3, Bedrock の権限が必要
 
