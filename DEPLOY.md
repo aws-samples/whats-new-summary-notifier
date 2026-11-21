@@ -151,6 +151,6 @@ bash deploy.sh --destroy                # default stack
 bash deploy.sh --destroy --tenant test  # specific tenant
 ```
 
-This automatically cleans up the CDK stack, CodeBuild project, IAM role, and SSM parameter.
+The script deletes the CDK stack with a CodeBuild build and waits for that build to finish. When the build succeeds, it cleans up the CodeBuild project, IAM role, and SSM parameter. When the build fails, it keeps them and exits with an error, so you can check the build logs and run the same command again.
 
 For manual cleanup: `cdk destroy` or `cdk destroy -c tenant=test`

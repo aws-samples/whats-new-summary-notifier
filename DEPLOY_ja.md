@@ -151,6 +151,6 @@ bash deploy.sh --destroy                # デフォルトスタック
 bash deploy.sh --destroy --tenant test  # 特定テナント
 ```
 
-CDK スタック、CodeBuild プロジェクト、IAM ロール、SSM パラメータが自動的にクリーンアップされます。
+スクリプトは CodeBuild のビルドで CDK スタックを削除し、そのビルドの終了を待ちます。ビルドが成功すると、CodeBuild プロジェクト、IAM ロール、SSM パラメータを削除します。ビルドが失敗した場合はこれらを残してエラーで終了するので、ビルドログを確認してから同じコマンドをもう一度実行してください。
 
 手動削除: `cdk destroy` または `cdk destroy -c tenant=test`
