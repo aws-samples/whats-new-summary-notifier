@@ -4,7 +4,8 @@ project_name: whats-new-summary-notifier
 # The CI job installs ASH with pip only, so these scanners' tools are not
 # present. ASH 3.8.0 fails a scan when a selected scanner is MISSING; turning
 # them off keeps the same coverage the job had with ASH 3.2.4, where they were
-# reported MISSING and ignored.
+# reported MISSING and ignored. actionlint runs in its own `actionlint` CI job
+# instead.
 scanners:
   actionlint:
     enabled: false
