@@ -38,8 +38,10 @@ jobs:
     env:
       ACTIONLINT_VERSION: 1.7.12
       # SHA-256 of actionlint_<version>_linux_amd64.tar.gz, from the release's
-      # actionlint_<version>_checksums.txt.
-      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+      # actionlint_<version>_checksums.txt. It is a public checksum, not a
+      # secret; the pragma stops detect-secrets (in ASH) flagging it as a
+      # high-entropy hex string.
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 # pragma: allowlist secret
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install actionlint
