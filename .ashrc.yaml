@@ -1,0 +1,48 @@
+# ASH (Automated Security Helper) configuration used by the `ash` CI job.
+project_name: whats-new-summary-notifier
+
+# The CI job installs ASH with pip only, so these scanners' tools are not
+# present. ASH 3.8.0 fails a scan when a selected scanner is MISSING; turning
+# them off keeps the same coverage the job had with ASH 3.2.4, where they were
+# reported MISSING and ignored. actionlint runs in its own `actionlint` CI job
+# instead.
+scanners:
+  actionlint:
+    enabled: false
+  gitleaks:
+    enabled: false
+  grype:
+    enabled: false
+  opengrep:
+    enabled: false
+  syft:
+    enabled: false
+  trivy:
+    enabled: false
+
+global_settings:
+  # minimatch GHSA-g3hv-75wg-m249 (Dependabot alert #117). The vulnerable copies
+  # are bundled in aws-cdk-lib (no fixed release yet) and pulled in by
+  # typescript-eslint (fixed in 8.73.0, PR #32). Remove these entries when the
+  # alert is resolved; they stop matching on the expiry date either way.
+  suppressions:
+    - path: node_modules/**/minimatch/package.json
+      rule_id: GHSA-g3hv-75wg-m249
+      reason: Tracked by Dependabot alert 117, waiting for an aws-cdk-lib release
+      expires: "2026-12-31"
+    - path: node_modules/aws-cdk-lib/package.json
+      rule_id: npm-audit-transitive-aws-cdk-lib
+      reason: Bundled minimatch, tracked by Dependabot alert 117
+      expires: "2026-12-31"
+    - path: node_modules/@aws-cdk/aws-lambda-python-alpha/package.json
+      rule_id: npm-audit-transitive-@aws-cdk/aws-lambda-python-alpha
+      reason: Inherits the aws-cdk-lib minimatch finding, tracked by Dependabot alert 117
+      expires: "2026-12-31"
+    - path: node_modules/typescript-eslint/package.json
+      rule_id: npm-audit-transitive-typescript-eslint
+      reason: minimatch via typescript-eslint, fixed by PR 32
+      expires: "2026-12-31"
+    - path: node_modules/@typescript-eslint/*/package.json
+      rule_id: npm-audit-transitive-@typescript-eslint/*
+      reason: minimatch via typescript-eslint, fixed by PR 32
+      expires: "2026-12-31"
