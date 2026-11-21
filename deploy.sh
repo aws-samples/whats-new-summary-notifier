@@ -150,7 +150,6 @@ case "$LANGUAGE" in
 esac
 
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-REGION=$(aws configure get region || echo "us-east-1")
 
 #-----------------------------------------------------------------------------
 # Destroy mode
@@ -197,8 +196,39 @@ EOBS
 
   echo "Build started: $BUILD_ID"
   echo "Waiting for completion..."
-  aws codebuild batch-get-builds --ids "$BUILD_ID" \
-    --query 'builds[0].buildStatus' --output text
+
+  # The destroy build runs with the CodeBuild role, so the role and project
+  # must stay until the build has finished.
+  # A status read that fails counts as IN_PROGRESS, as in the deploy loop below.
+  LAST_PHASE=""
+  while true; do
+    BUILD_STATE=$(aws codebuild batch-get-builds --ids "$BUILD_ID" \
+      --query 'builds[0].[buildStatus,currentPhase]' --output text 2>/dev/null || echo "IN_PROGRESS")
+    read -r STATUS PHASE <<< "$BUILD_STATE"
+    if [[ "$STATUS" != "IN_PROGRESS" ]]; then
+      break
+    fi
+    if [[ -n "${PHASE:-}" && "$PHASE" != "$LAST_PHASE" ]]; then
+      echo "  Phase: $PHASE"
+      LAST_PHASE="$PHASE"
+    fi
+    sleep 10
+  done
+
+  echo ""
+  echo "============================================"
+  echo " Destroy build finished: $STATUS"
+  echo "============================================"
+
+  if [[ "$STATUS" != "SUCCEEDED" ]]; then
+    echo ""
+    echo "Destroy failed. The CodeBuild project ($CB_PROJECT_NAME), IAM role"
+    echo "(${CB_PROJECT_NAME}-role) and SSM parameter ($SSM_PARAM_NAME) were kept"
+    echo "so that you can retry."
+    echo "  Build logs: CloudWatch Logs group /aws/codebuild/${CB_PROJECT_NAME}, stream ${BUILD_ID#*:}"
+    echo "Fix the cause shown in the logs, then run the same deploy.sh --destroy command again."
+    exit 1
+  fi
   echo ""
 
   # Cleanup CodeBuild project and role
@@ -249,6 +279,13 @@ ROLE_ARN=$(aws iam create-role \
   --query 'Role.Arn' --output text 2>/dev/null || \
   aws iam get-role --role-name "$ROLE_NAME" --query 'Role.Arn' --output text)
 
+# The second statement lets `cdk bootstrap` (run in buildspec.yml) create,
+# update and roll back the CDKToolkit version parameter
+# (/cdk-bootstrap/<qualifier>/version). CloudFormation manages that parameter
+# with the caller's permissions, so without it bootstrap fails in a Region that
+# has no CDKToolkit stack yet.
+# shortcut: the ARN assumes the aws partition; derive it from the caller ARN
+# if this script needs to run in aws-cn or aws-us-gov.
 DEPLOY_POLICY=$(cat <<EOJSON
 {
   "Version": "2012-10-17",
@@ -269,6 +306,14 @@ DEPLOY_POLICY=$(cat <<EOJSON
         "ecr:*"
       ],
       "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ssm:PutParameter","ssm:GetParameters","ssm:DeleteParameter",
+        "ssm:AddTagsToResource","ssm:RemoveTagsFromResource"
+      ],
+      "Resource": "arn:aws:ssm:*:${ACCOUNT_ID}:parameter/cdk-bootstrap/*"
     }
   ]
 }
