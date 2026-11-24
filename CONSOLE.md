@@ -53,7 +53,7 @@ The **🛠️ GUI Editor** tab provides structured forms for:
 |---|---|
 | 🤖 Model Configuration | Model Region (dropdown), Model IDs (with Bedrock + CRIS model suggestions) |
 | 📝 Summarizers | Name, output language, persona (define before Notifiers) |
-| 🔔 Notifiers | Name, destination (Slack/Teams), summarizer (dropdown from defined summarizers), SSM param name (dropdown of existing + manual input), RSS URLs |
+| 🔔 Notifiers | Name, destination (Slack/Teams/Google Chat (preview)), summarizer (dropdown from defined summarizers), SSM param name (dropdown of existing + manual input), RSS URLs |
 
 The **📝 JSON** tab allows direct editing of the configuration JSON. Changes sync bidirectionally between tabs.
 

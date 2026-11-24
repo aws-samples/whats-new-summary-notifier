@@ -12,6 +12,9 @@
 #### Microsoft Teams の場合
 [Teams Incoming Webhook ドキュメント](https://learn.microsoft.com/ja-jp/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook?tabs=newteams%2Cdotnet)を参考に Webhook URL を取得してください。
 
+#### Google Chat の場合（preview）
+Google Chat への通知は preview の機能で、実際の Google Chat スペースでの動作はまだ確認していません。[Google Chat の受信 Webhook のドキュメント](https://developers.google.com/workspace/chat/quickstart/webhooks)を参考に、スペースで Webhook を登録し（アプリと統合 > Webhook を追加）、URL をコピーしてください。Google Workspace の組織で受信 Webhook が許可されている必要があります。URL にはトークンが含まれるので共有しないでください。
+
 ### 2. デプロイ
 
 [CloudShell](https://console.aws.amazon.com/cloudshell/home) を開き、以下を実行します:
@@ -133,7 +136,7 @@ cdk deploy
 ### notifiers
 | キー | 説明 |
 |---|---|
-| `destination` | `slack` または `teams` |
+| `destination` | `slack`、`teams`、`googlechat` のいずれか（Google Chat は preview で、実際のスペースでは未確認） |
 | `summarizerName` | 使用する summarizer の名前 |
 | `webhookUrlParameterName` | Webhook URL を格納する SSM Parameter Store 名 |
 | `rssUrl` | RSS フィード URL（複数指定可） |
