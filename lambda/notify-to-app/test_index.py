@@ -121,6 +121,76 @@ class TestCreateTeamsMessage:
         assert card["actions"][0]["url"] == "https://example.com"
 
 
+GC_ITEM = {
+    "rss_title": "New <feature> | launch",
+    "rss_link": "https://example.com/a",
+    "summary": "Short summary.",
+    "detail": "- point 1\n- point 2",
+}
+
+
+class TestCreateGoogleChatMessage:
+    """Test Google Chat incoming webhook message creation."""
+
+    def test_text_has_link_summary_and_detail(self):
+        msg = index.create_google_chat_message(dict(GC_ITEM))
+        assert list(msg) == ["text"]
+        assert msg["text"] == (
+            "<https://example.com/a|New ＜feature＞ ｜ launch>\nShort summary.\n\n- point 1\n- point 2"
+        )
+
+    def test_non_http_link_is_not_a_link(self):
+        item = dict(GC_ITEM, rss_link="javascript:alert(1)")
+        text = index.create_google_chat_message(item)["text"]
+        assert not text.startswith("<")
+        assert text.startswith("New ＜feature＞ ｜ launch\njavascript:alert(1)\n")
+
+
+class TestPushNotificationDestination:
+    """Test that push_notification formats the message for each destination."""
+
+    def _push(self, monkeypatch, destination):
+        posted = []
+
+        class _Res:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b"ok"
+
+        def fake_urlopen(req, *a, **k):
+            posted.append(json.loads(req.data))
+            return _Res()
+
+        notifier = {"destination": destination, "summarizerName": "TestSummarizer", "webhookUrlParameterName": "/p"}
+        monkeypatch.setattr(index, "NOTIFIERS", {"N": notifier})
+        ssm = MagicMock()
+        ssm.get_parameter.return_value = {"Parameter": {"Value": "https://hooks.example.com/x"}}
+        monkeypatch.setattr(index, "ssm", ssm)
+        monkeypatch.setattr(index, "get_blog_content", lambda url: "body")
+        monkeypatch.setattr(index, "summarize_blog", lambda *a, **k: ("sum", "- d", {"model_id": "m", "latency_sec": 1, "input_tokens": 1, "output_tokens": 1}))
+        monkeypatch.setattr(index.urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setattr(index.time, "sleep", lambda s: None)
+        item = {"rss_title": "T", "rss_link": "https://example.com/a", "rss_time": "t", "rss_category": "c", "rss_notifier_name": "N"}
+        index.push_notification([item])
+        return posted
+
+    def test_googlechat(self, monkeypatch):
+        assert self._push(monkeypatch, "googlechat") == [{"text": "<https://example.com/a|T>\nsum\n\n- d"}]
+
+    def test_slack_is_unchanged(self, monkeypatch):
+        posted = self._push(monkeypatch, "slack")
+        assert posted[0]["rss_title"] == "T" and posted[0]["summary"] == "sum"
+
+    def test_unknown_destination_falls_back_to_slack(self, monkeypatch):
+        posted = self._push(monkeypatch, "other")
+        assert "text" not in posted[0] and posted[0]["summary"] == "sum"
+
+
 class TestModelIds:
     """Test model IDs configuration."""
 

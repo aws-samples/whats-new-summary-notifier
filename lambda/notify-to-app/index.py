@@ -257,6 +257,8 @@ def push_notification(item_list):
         if destination == "teams":
             item["detail"] = item["detail"].replace("。\n", "。\r")
             msg = create_teams_message(item)
+        elif destination == "googlechat":
+            msg = create_google_chat_message(item)
         else:  # Slack
             msg = item
 
@@ -294,6 +296,22 @@ def get_new_entries(blog_entries):
         else:  # Do not notify for REMOVE or UPDATE events
             print("skip REMOVE or UPDATE event")
     return res_list
+
+
+def create_google_chat_message(item):
+    """Build a Google Chat incoming webhook message (preview)
+
+    Incoming webhooks use the Chat markup syntax by default, where
+    <URL|text> is a link and a line starting with "- " is a bullet.
+
+    Args:
+        item (dict): The article with its summary and detail
+    """
+    # "<", ">" and "|" would break the <URL|text> link syntax
+    title = item["rss_title"].translate(str.maketrans({"<": "＜", ">": "＞", "|": "｜"}))
+    link = item["rss_link"]
+    heading = f"<{link}|{title}>" if link.lower().startswith(("http://", "https://")) else f"{title}\n{link}"
+    return {"text": f"{heading}\n{item['summary']}\n\n{item['detail']}"}
 
 
 def create_teams_message(item):
