@@ -120,6 +120,17 @@ class TestCreateTeamsMessage:
         # Check action URL
         assert card["actions"][0]["url"] == "https://example.com"
 
+    def test_matches_workflows_webhook_schema(self):
+        """The body matches the Workflows webhook trigger's Adaptive Card schema."""
+        item = {"rss_title": "T", "rss_link": "https://example.com", "summary": "s", "detail": "- d"}
+        msg = index.create_teams_message(item)
+        attachment = msg["attachments"][0]
+        assert set(attachment) == {"contentType", "contentUrl", "content"}
+        assert attachment["contentType"] == "application/vnd.microsoft.card.adaptive"
+        assert attachment["contentUrl"] is None
+        # Workflows webhooks support every Adaptive Card element except Action.Submit
+        assert "Action.Submit" not in json.dumps(msg)
+
 
 GC_ITEM = {
     "rss_title": "New <feature> | launch",
@@ -181,6 +192,12 @@ class TestPushNotificationDestination:
 
     def test_googlechat(self, monkeypatch):
         assert self._push(monkeypatch, "googlechat") == [{"text": "<https://example.com/a|T>\nsum\n\n- d"}]
+
+    def test_teams(self, monkeypatch):
+        posted = self._push(monkeypatch, "teams")
+        assert posted[0]["type"] == "message"
+        assert posted[0]["attachments"][0]["contentUrl"] is None
+        assert posted[0]["attachments"][0]["content"]["type"] == "AdaptiveCard"
 
     def test_slack_is_unchanged(self, monkeypatch):
         posted = self._push(monkeypatch, "slack")
