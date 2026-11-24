@@ -72,7 +72,7 @@ Or manually:
 cdk destroy
 ```
 By default, some resources such as the Amazon DynamoDB table are set to not be deleted.
-If you need to completely delete everything, you will need to access the remaining resources and manually delete them.
+If you need to completely delete everything, you will need to access the remaining resources and manually delete them. See [What remains after destroy](DEPLOY.md#what-remains-after-destroy) for the list and the commands.
 
 ## Third Party Services
 This code interacts with Slack, Microsoft Teams or Google Chat which has terms published at [Terms Page (Slack)](https://slack.com/main-services-agreement) / [Terms Page (Microsoft 365)](https://www.microsoft.com/en/servicesagreement) / [Terms Page (Google Workspace)](https://workspace.google.com/terms/premier_terms/), and pricing described at [Pricing Page (Slack)](https://slack.com/pricing) / [Pricing Page (Microsoft 365)](https://www.microsoft.com/en-us/microsoft-365/business/compare-all-microsoft-365-business-products?&activetab=tab:primaryr2) / [Pricing Page (Google Workspace)](https://workspace.google.com/pricing). You should be familiar with the pricing and confirm that your use case complies with the terms before proceeding.

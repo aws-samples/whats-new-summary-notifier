@@ -68,7 +68,7 @@ bash deploy.sh --destroy
 cdk destroy
 ```
 デフォルトでは Amazon DynamoDB テーブルなど一部のリソースが削除されず残る設定となっています。
-完全な削除が必要な場合は、残存したリソースにアクセスし、手動で削除を行ってください。
+完全な削除が必要な場合は、残存したリソースにアクセスし、手動で削除を行ってください。残るリソースの一覧と削除のコマンドは[デプロイガイドの「削除のあとに残るもの」](DEPLOY_ja.md#削除のあとに残るもの)にあります。
 
 ## Third Party Services
 このコードは 3rd Party Application である Slack、Microsoft Teams または Google Chat と連携します。利用規約 [Terms Page (Slack)](https://slack.com/main-services-agreement) / [Terms Page (Microsoft 365)](https://www.microsoft.com/en/servicesagreement) / [Terms Page (Google Workspace)](https://workspace.google.com/terms/premier_terms/) や価格設定 [Pricing Page (Slack)](https://slack.com/pricing) / [Pricing Page (Microsoft 365)](https://www.microsoft.com/en-us/microsoft-365/business/compare-all-microsoft-365-business-products?&activetab=tab:primaryr2) / [Pricing Page (Google Workspace)](https://workspace.google.com/pricing) はこちらに公開されています。始める前に、価格設定を確認し、使用目的が利用規約に準拠していることを確認することを推奨します。

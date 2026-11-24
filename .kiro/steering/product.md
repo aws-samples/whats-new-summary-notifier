@@ -12,7 +12,7 @@ Whats New Summary Notifier は、AWS What's New などの Web 記事の RSS フ�
 - 要約言語・ペルソナのカスタマイズ（cdk.json の summarizers で設定）
 - モデルフォールバック: 複数モデル ID を順に試行し、失敗時は次のモデルへ自動切替
 - マルチテナントデプロイ: `--tenant` で完全分離されたスタックを複数展開可能
-- deploy.sh による CloudShell ワンクリックデプロイ（CodeBuild 経由）
+- deploy.sh による CloudShell ワンクリックデプロイ（CodeBuild 経由）。`--destroy` のあとも DynamoDB テーブル、ロググループ、CDKToolkit とその資産バケットは残る（DEPLOY.md の Destroy の節）。待ちの途中で止まったら同じコマンドを再実行すると片付けまで進む
 - ローカル Management Console（React + Express）でスタックの閲覧・デプロイ・更新・削除
 
 ## アーキテクチャ

@@ -189,4 +189,32 @@ bash deploy.sh --destroy --tenant test  # specific tenant
 
 The script deletes the CDK stack with a CodeBuild build and waits for that build to finish. When the build succeeds, it cleans up the CodeBuild project, IAM role, and SSM parameter. When the build fails, it keeps them and exits with an error, so you can check the build logs and run the same command again.
 
+If the script stops while it waits for the build (you press Ctrl+C, close the terminal, or the CloudShell session ends), the build keeps running in CodeBuild, but the cleanup does not run, so the CodeBuild project, IAM role, and SSM parameter stay. Run the same `deploy.sh --destroy` command again. It starts another destroy build, which succeeds even when the stack is already gone, and then cleans up the three resources.
+
 For manual cleanup: `cdk destroy` or `cdk destroy -c tenant=test`
+
+### What remains after destroy
+
+Deleting the stack does not delete everything. These resources stay in the account and Region.
+
+| Resource | Name | Why it stays |
+|---|---|---|
+| DynamoDB table (the RSS history) | `<stack name>-WhatsNewRSSHistory...` | The table uses the CDK default removal policy `RETAIN`, so CloudFormation skips it (`DELETE_SKIPPED`) |
+| Lambda log groups (3) | `/aws/lambda/<stack name>-NotifyNewEntry...`, `-newsCrawler...`, `-LogRetention...` | The functions set `logRetention`; CDK creates these log groups outside the stack, so they are not deleted with it |
+| CodeBuild log group | `/aws/codebuild/whats-new-summary-notifier[-<tenant>]` | CodeBuild creates it; `deploy.sh` deletes the project but not its logs |
+| CDKToolkit stack and its assets bucket | `CDKToolkit`, `cdk-hnb659fds-assets-<account>-<region>` | Created by `cdk bootstrap` and shared by every CDK app in the account and Region. Deleting CDKToolkit also keeps the bucket (`DELETE_SKIPPED`) |
+
+`<stack name>` is `WhatsNewSummaryNotifierStack`, or `WhatsNewSummaryNotifier-<tenant>` for a tenant (long names are shortened in the log group names). To remove them, after the destroy has finished:
+
+```bash
+# DynamoDB table (this deletes the stored articles and their summaries)
+aws dynamodb list-tables --query "TableNames[?contains(@, 'WhatsNewRSSHistory')]"
+aws dynamodb delete-table --table-name <table name>
+
+# Log groups
+aws logs describe-log-groups --log-group-name-prefix /aws/lambda/WhatsNewSummaryNotifier --query 'logGroups[].logGroupName'
+aws logs describe-log-groups --log-group-name-prefix /aws/codebuild/whats-new-summary-notifier --query 'logGroups[].logGroupName'
+aws logs delete-log-group --log-group-name <log group name>
+```
+
+Delete CDKToolkit only when no other CDK app in the account and Region uses it. The assets bucket is versioned, so delete every object version and delete marker before you delete the bucket (for example, empty it in the S3 console, then delete it). The tables and log groups of other tenants and other stacks may match the same prefixes, so check each name before you delete it.

@@ -189,4 +189,32 @@ bash deploy.sh --destroy --tenant test  # 特定テナント
 
 スクリプトは CodeBuild のビルドで CDK スタックを削除し、そのビルドの終了を待ちます。ビルドが成功すると、CodeBuild プロジェクト、IAM ロール、SSM パラメータを削除します。ビルドが失敗した場合はこれらを残してエラーで終了するので、ビルドログを確認してから同じコマンドをもう一度実行してください。
 
+ビルドの終了を待っている間にスクリプトが止まると（Ctrl+C、ターミナルを閉じた、CloudShell のセッションが切れたなど）、ビルドは CodeBuild で動き続けますが、片付けは実行されないので、CodeBuild プロジェクト、IAM ロール、SSM パラメータが残ります。同じ `deploy.sh --destroy` のコマンドをもう一度実行してください。もう一度 destroy のビルドが動き（スタックがすでに消えていても成功します）、そのあとで 3 つを削除します。
+
 手動削除: `cdk destroy` または `cdk destroy -c tenant=test`
+
+### 削除のあとに残るもの
+
+スタックを削除しても、次のリソースはアカウントとリージョンに残ります。
+
+| リソース | 名前 | 残る理由 |
+|---|---|---|
+| DynamoDB テーブル（RSS の履歴） | `<スタック名>-WhatsNewRSSHistory...` | テーブルは CDK の既定の削除ポリシー `RETAIN` のままなので、CloudFormation が削除を飛ばします（`DELETE_SKIPPED`） |
+| Lambda のロググループ（3 つ） | `/aws/lambda/<スタック名>-NotifyNewEntry...`、`-newsCrawler...`、`-LogRetention...` | 関数に `logRetention` を設定しているため、CDK はロググループをスタックの外で作ります。スタックと一緒には消えません |
+| CodeBuild のロググループ | `/aws/codebuild/whats-new-summary-notifier[-<テナント名>]` | CodeBuild が作ります。`deploy.sh` はプロジェクトを消しますが、ログは消しません |
+| CDKToolkit スタックとその資産バケット | `CDKToolkit`、`cdk-hnb659fds-assets-<アカウント ID>-<リージョン>` | `cdk bootstrap` が作り、同じアカウントとリージョンのすべての CDK アプリが共有します。CDKToolkit を削除してもバケットは残ります（`DELETE_SKIPPED`） |
+
+`<スタック名>` は `WhatsNewSummaryNotifierStack`、テナントなら `WhatsNewSummaryNotifier-<テナント名>` です（ロググループの名前では長い名前が途中で切られます）。削除する場合は、destroy が終わってから次のように実行します。
+
+```bash
+# DynamoDB テーブル（保存した記事と要約が消えます）
+aws dynamodb list-tables --query "TableNames[?contains(@, 'WhatsNewRSSHistory')]"
+aws dynamodb delete-table --table-name <テーブル名>
+
+# ロググループ
+aws logs describe-log-groups --log-group-name-prefix /aws/lambda/WhatsNewSummaryNotifier --query 'logGroups[].logGroupName'
+aws logs describe-log-groups --log-group-name-prefix /aws/codebuild/whats-new-summary-notifier --query 'logGroups[].logGroupName'
+aws logs delete-log-group --log-group-name <ロググループ名>
+```
+
+CDKToolkit は、同じアカウントとリージョンでほかの CDK アプリが使っていないときだけ削除してください。資産バケットはバージョニングが有効なので、オブジェクトのすべてのバージョンと削除マーカーを消してからバケットを削除します（S3 コンソールの「空にする」を使ってから削除するなど）。ほかのテナントやスタックのテーブルやロググループも同じ接頭辞に当たることがあるので、削除する前に名前を 1 つずつ確かめてください。
