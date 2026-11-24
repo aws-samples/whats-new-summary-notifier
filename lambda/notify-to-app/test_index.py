@@ -200,3 +200,146 @@ class TestCleanDetail:
 
     def test_keeps_plain_bullets(self):
         assert index.clean_detail("- a\n- b") == "- a\n- b"
+
+
+class TestNotifierFilter:
+    def test_not_set(self):
+        assert index.notifier_filter({"destination": "slack"}, "topics") == []
+
+    def test_values(self):
+        assert index.notifier_filter({"filter": {"topics": ["a", " ", "b"]}}, "topics") == ["a", "b"]
+
+    def test_invalid_is_ignored(self):
+        assert index.notifier_filter({"filter": {"topics": "a"}}, "topics") == []
+        assert index.notifier_filter({"filter": "a"}, "topics") == []
+
+
+class TestJudgeRelevance:
+    @staticmethod
+    def _response(text):
+        return {"output": {"message": {"content": [{"text": text}]}}, "usage": {}}
+
+    def _run(self, monkeypatch, responses):
+        client = MagicMock()
+        client.converse.side_effect = responses
+        monkeypatch.setattr(index, "get_bedrock_client", lambda **_: client)
+        return index.judge_relevance("body", ["generative AI"], ["model-a", "model-b"]), client
+
+    def test_yes(self, monkeypatch):
+        result, client = self._run(monkeypatch, [self._response("<relevant>yes</relevant>")])
+        assert result is True
+        prompt = client.converse.call_args.kwargs["messages"][0]["content"][0]["text"]
+        assert "<topics><topic>generative AI</topic></topics>" in prompt
+
+    def test_no(self, monkeypatch):
+        assert self._run(monkeypatch, [self._response("<relevant> NO </relevant>")])[0] is False
+
+    def test_missing_tag_is_unknown(self, monkeypatch):
+        assert self._run(monkeypatch, [self._response("I think so")])[0] is None
+
+    def test_conflicting_answers_are_unknown(self, monkeypatch):
+        assert self._run(monkeypatch, [self._response("<relevant>yes</relevant><relevant>no</relevant>")])[0] is None
+
+    def test_falls_back_to_next_model(self, monkeypatch):
+        result, client = self._run(monkeypatch, [_FakeClientError("ThrottlingException"), self._response("<relevant>no</relevant>")])
+        assert result is False
+        assert client.converse.call_count == 2
+
+    def test_every_model_failing_is_unknown(self, monkeypatch):
+        assert self._run(monkeypatch, [RuntimeError("x"), _FakeClientError("AccessDeniedException")])[0] is None
+
+
+class TestPushNotificationFilter:
+    """Test the optional notifier filter in push_notification."""
+
+    def _push(self, monkeypatch, notifier_filter=None, filter_result="", relevant=None):
+        calls = {"ssm": 0, "judge": [], "summarize": 0, "posted": 0, "updates": []}
+
+        class _Res:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b"ok"
+
+        notifier = {"destination": "slack", "summarizerName": "TestSummarizer", "webhookUrlParameterName": "/p"}
+        if notifier_filter is not None:
+            notifier["filter"] = notifier_filter
+        monkeypatch.setattr(index, "NOTIFIERS", {"N": notifier})
+        ssm = MagicMock()
+        ssm.get_parameter.side_effect = lambda **kw: calls.__setitem__("ssm", calls["ssm"] + 1) or {"Parameter": {"Value": "https://hooks.example.com/x"}}
+        table = MagicMock()
+        table.update_item.side_effect = lambda **kw: calls["updates"].append(kw)
+        monkeypatch.setattr(index, "ssm", ssm)
+        monkeypatch.setattr(index, "ddb_table", table)
+        monkeypatch.setattr(index, "get_blog_content", lambda url: "body")
+
+        def fake_judge(body, topics, model_ids):
+            calls["judge"].append((topics, model_ids))
+            return relevant
+
+        def fake_summarize(*a, **k):
+            calls["summarize"] += 1
+            return "sum", "- d", {"model_id": "m", "latency_sec": 1, "input_tokens": 1, "output_tokens": 1}
+
+        def fake_urlopen(req, *a, **k):
+            calls["posted"] += 1
+            return _Res()
+
+        monkeypatch.setattr(index, "judge_relevance", fake_judge)
+        monkeypatch.setattr(index, "summarize_blog", fake_summarize)
+        monkeypatch.setattr(index.urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setattr(index.time, "sleep", lambda s: None)
+        item = {"rss_title": "T", "rss_link": "https://example.com/a", "rss_time": "t", "rss_category": "c",
+                "rss_notifier_name": "N", "rss_filter_result": filter_result}
+        index.push_notification([item])
+        return calls
+
+    def test_without_filter_nothing_changes(self, monkeypatch):
+        calls = self._push(monkeypatch)
+        assert calls["judge"] == [] and calls["summarize"] == 1 and calls["posted"] == 1
+
+    def test_empty_filter_nothing_changes(self, monkeypatch):
+        calls = self._push(monkeypatch, notifier_filter={})
+        assert calls["judge"] == [] and calls["posted"] == 1
+
+    def test_excluded_by_categories_is_skipped_before_any_call(self, monkeypatch):
+        calls = self._push(monkeypatch, filter_result="excluded:categories")
+        assert calls["ssm"] == 0 and calls["judge"] == [] and calls["summarize"] == 0 and calls["posted"] == 0
+
+    def test_relevant_article_is_posted(self, monkeypatch):
+        calls = self._push(monkeypatch, notifier_filter={"topics": ["AI"]}, relevant=True)
+        assert calls["judge"] == [(["AI"], ["model-a", "model-b"])] and calls["posted"] == 1
+
+    def test_judge_uses_filter_model_ids(self, monkeypatch):
+        calls = self._push(monkeypatch, notifier_filter={"topics": ["AI"], "modelIds": ["cheap"]}, relevant=True)
+        assert calls["judge"] == [(["AI"], ["cheap"])]
+
+    def test_irrelevant_article_is_marked_and_not_posted(self, monkeypatch):
+        calls = self._push(monkeypatch, notifier_filter={"topics": ["AI"]}, relevant=False)
+        assert calls["summarize"] == 0 and calls["posted"] == 0
+        assert calls["updates"][0]["ExpressionAttributeValues"] == {":st": "filtered"}
+
+    def test_unknown_answer_is_posted(self, monkeypatch):
+        calls = self._push(monkeypatch, notifier_filter={"topics": ["AI"]}, relevant=None)
+        assert calls["summarize"] == 1 and calls["posted"] == 1
+
+    def test_invalid_topics_are_ignored(self, monkeypatch):
+        calls = self._push(monkeypatch, notifier_filter={"topics": "AI"})
+        assert calls["judge"] == [] and calls["posted"] == 1
+
+
+class TestGetNewEntriesFilterResult:
+    def test_reads_filter_result(self):
+        image = {"category": {"S": "c"}, "pubtime": {"S": "t"}, "title": {"S": "T"}, "url": {"S": "u"},
+                 "notifier_name": {"S": "N"}, "filter_result": {"S": "excluded:categories"}}
+        result = index.get_new_entries([{"eventName": "INSERT", "dynamodb": {"NewImage": image}}])
+        assert result[0]["rss_filter_result"] == "excluded:categories"
+
+    def test_missing_filter_result(self):
+        image = {"category": {"S": "c"}, "pubtime": {"S": "t"}, "title": {"S": "T"}, "url": {"S": "u"}, "notifier_name": {"S": "N"}}
+        result = index.get_new_entries([{"eventName": "INSERT", "dynamodb": {"NewImage": image}}])
+        assert result[0]["rss_filter_result"] == ""
