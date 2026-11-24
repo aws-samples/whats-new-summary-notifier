@@ -15,7 +15,7 @@
 - Amazon EventBridge（定期スケジュール）
 - AWS Lambda（RSS クロール、通知処理）
 - AWS Systems Manager Parameter Store（Webhook URL の安全な格納）
-- AWS CodeBuild（deploy.sh からのリモートデプロイ）
+- AWS CodeBuild（deploy.sh からのリモートデプロイ）。deploy.sh と Console が作る CodeBuild ロール（`<project>-role` の `deploy-policy`）は、ビルドログ、Console のソース zip の読み取り、`cdk-hnb659fds-*` ロールの AssumeRole、CDKToolkit スタックとその資源（`cdk bootstrap` 用）だけを許す。アプリのスタックの変更は bootstrap が作るロールが行う。ポリシーは `deploy.sh` と `console/server/deploy-policy.ts` の 2 か所にあり、`test/codebuild-deploy-policy.test.ts` が一致を確かめる
 
 ## 開発ツール
 - TypeScript ~5.9 / Node.js 22+（target: ES2022。CI の test は Node.js 22・24・26、その他の CI ジョブと CodeBuild は Node.js 26）

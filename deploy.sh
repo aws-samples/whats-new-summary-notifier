@@ -288,38 +288,72 @@ ROLE_ARN=$(aws iam create-role \
   --query 'Role.Arn' --output text 2>/dev/null || \
   aws iam get-role --role-name "$ROLE_NAME" --query 'Role.Arn' --output text)
 
-# The second statement lets `cdk bootstrap` (run in buildspec.yml) create,
-# update and roll back the CDKToolkit version parameter
-# (/cdk-bootstrap/<qualifier>/version). CloudFormation manages that parameter
-# with the caller's permissions, so without it bootstrap fails in a Region that
-# has no CDKToolkit stack yet.
-# shortcut: the ARN assumes the aws partition; derive it from the caller ARN
-# if this script needs to run in aws-cn or aws-us-gov.
+# The CodeBuild role runs `cdk bootstrap`, `cdk deploy` and `cdk destroy`
+# (buildspec.yml and the destroy buildspec above). In CDK v2, deploy and
+# destroy act through the cdk-hnb659fds-* roles that bootstrap creates, so
+# this role only needs to write its build logs, assume those roles, and
+# create or update the CDKToolkit stack. CloudFormation creates the
+# CDKToolkit resources (bucket, ECR repository, roles, version parameter)
+# with this role's own permissions, so those statements are scoped to the
+# names the default bootstrap template uses. The last statement lets
+# bootstrap create, update and roll back the version parameter
+# (/cdk-bootstrap/<qualifier>/version); without it bootstrap fails in a
+# Region that has no CDKToolkit stack yet.
+# The policy has no Region in it, because one role per tenant is reused in
+# every Region the tenant is deployed to.
+# Keep in sync with console/server/deploy-policy.ts, which also reads the
+# source zip from S3 (this script uses the GitHub source).
+# shortcut: the ARNs assume the aws partition and the default qualifier
+# (hnb659fds); derive them from the caller ARN and cdk.json if this script
+# needs to run in aws-cn or aws-us-gov or with a custom qualifier.
 DEPLOY_POLICY=$(cat <<EOJSON
 {
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "BuildLogs",
       "Effect": "Allow",
-      "Action": [
-        "logs:CreateLogGroup","logs:CreateLogStream","logs:PutLogEvents",
-        "s3:*",
-        "cloudformation:*",
-        "iam:*",
-        "lambda:*",
-        "dynamodb:*",
-        "events:*",
-        "ssm:GetParameter*","ssm:DescribeParameters",
-        "bedrock:*",
-        "sts:AssumeRole",
-        "ecr:*"
-      ],
-      "Resource": "*"
+      "Action": ["logs:CreateLogGroup","logs:CreateLogStream","logs:PutLogEvents"],
+      "Resource": [
+        "arn:aws:logs:*:${ACCOUNT_ID}:log-group:/aws/codebuild/${CB_PROJECT_NAME}",
+        "arn:aws:logs:*:${ACCOUNT_ID}:log-group:/aws/codebuild/${CB_PROJECT_NAME}:*"
+      ]
     },
     {
+      "Sid": "AssumeCdkBootstrapRoles",
+      "Effect": "Allow",
+      "Action": ["sts:AssumeRole","sts:TagSession"],
+      "Resource": "arn:aws:iam::${ACCOUNT_ID}:role/cdk-hnb659fds-*-role-${ACCOUNT_ID}-*"
+    },
+    {
+      "Sid": "BootstrapStack",
+      "Effect": "Allow",
+      "Action": "cloudformation:*",
+      "Resource": "arn:aws:cloudformation:*:${ACCOUNT_ID}:stack/CDKToolkit/*"
+    },
+    {
+      "Sid": "BootstrapBucket",
+      "Effect": "Allow",
+      "Action": "s3:*",
+      "Resource": "arn:aws:s3:::cdk-hnb659fds-assets-${ACCOUNT_ID}-*"
+    },
+    {
+      "Sid": "BootstrapRepository",
+      "Effect": "Allow",
+      "Action": "ecr:*",
+      "Resource": "arn:aws:ecr:*:${ACCOUNT_ID}:repository/cdk-hnb659fds-container-assets-${ACCOUNT_ID}-*"
+    },
+    {
+      "Sid": "BootstrapRoles",
+      "Effect": "Allow",
+      "Action": "iam:*",
+      "Resource": "arn:aws:iam::${ACCOUNT_ID}:role/cdk-hnb659fds-*"
+    },
+    {
+      "Sid": "BootstrapVersionParameter",
       "Effect": "Allow",
       "Action": [
-        "ssm:PutParameter","ssm:GetParameters","ssm:DeleteParameter",
+        "ssm:PutParameter","ssm:GetParameter","ssm:GetParameters","ssm:DeleteParameter",
         "ssm:AddTagsToResource","ssm:RemoveTagsFromResource"
       ],
       "Resource": "arn:aws:ssm:*:${ACCOUNT_ID}:parameter/cdk-bootstrap/*"

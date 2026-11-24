@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import { deployPolicy } from './deploy-policy';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { loadSharedConfigFiles } from '@smithy/shared-ini-file-loader';
@@ -297,21 +298,9 @@ const TRUST_POLICY = JSON.stringify({
   Statement: [{ Effect: 'Allow', Principal: { Service: 'codebuild.amazonaws.com' }, Action: 'sts:AssumeRole' }],
 });
 
-const DEPLOY_POLICY = JSON.stringify({
-  Version: '2012-10-17',
-  Statement: [{
-    Effect: 'Allow',
-    Action: [
-      'logs:CreateLogGroup', 'logs:CreateLogStream', 'logs:PutLogEvents',
-      's3:*', 'cloudformation:*', 'iam:*', 'lambda:*', 'dynamodb:*',
-      'events:*', 'ssm:*',
-      'bedrock:*', 'sts:AssumeRole', 'ecr:*',
-    ],
-    Resource: '*',
-  }],
-});
-
-async function ensureIamRole(iam: IAMClient, roleName: string): Promise<string> {
+// Creates the role, or replaces its policy, so an existing role also gets the current policy
+async function ensureIamRole(iam: IAMClient, roleName: string, accountId: string, projectName: string): Promise<string> {
+  const policyDocument = JSON.stringify(deployPolicy(accountId, projectName));
   try {
     const { Role } = await iam.send(new CreateRoleCommand({
       RoleName: roleName,
@@ -319,7 +308,7 @@ async function ensureIamRole(iam: IAMClient, roleName: string): Promise<string> 
     }));
     // New role — attach policy and wait for propagation
     await iam.send(new PutRolePolicyCommand({
-      RoleName: roleName, PolicyName: 'deploy-policy', PolicyDocument: DEPLOY_POLICY,
+      RoleName: roleName, PolicyName: 'deploy-policy', PolicyDocument: policyDocument,
     }));
     await new Promise((r) => setTimeout(r, 10000));
     return Role!.Arn!;
@@ -327,7 +316,7 @@ async function ensureIamRole(iam: IAMClient, roleName: string): Promise<string> 
     if (e.name === 'EntityAlreadyExistsException') {
       // Ensure policy is up to date
       await iam.send(new PutRolePolicyCommand({
-        RoleName: roleName, PolicyName: 'deploy-policy', PolicyDocument: DEPLOY_POLICY,
+        RoleName: roleName, PolicyName: 'deploy-policy', PolicyDocument: policyDocument,
       }));
       const { Role } = await iam.send(new GetRoleCommand({ RoleName: roleName }));
       return Role!.Arn!;
@@ -461,7 +450,7 @@ app.post('/api/deploy', async (req, res) => {
 
     // 3. Ensure IAM role and CodeBuild project
     const iam = new IAMClient({ region: resolvedRegion, credentials });
-    const roleArn = await ensureIamRole(iam, roleName);
+    const roleArn = await ensureIamRole(iam, roleName, Account!, cbProjectName);
     const cb = new CodeBuildClient({ region: resolvedRegion, credentials });
     await ensureCodeBuildProject(cb, cbProjectName, roleArn, bucket, key);
 
@@ -503,7 +492,7 @@ app.post('/api/deploy/update', async (req, res) => {
       }));
     }
     const iam = new IAMClient({ region: targetRegion, credentials });
-    const roleArn = await ensureIamRole(iam, deriveNames(tenant).roleName);
+    const roleArn = await ensureIamRole(iam, deriveNames(tenant).roleName, Account!, cbProjectName);
     const cb = new CodeBuildClient({ region: targetRegion, credentials });
     await ensureCodeBuildProject(cb, cbProjectName, roleArn, bucket, key);
 
