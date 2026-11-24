@@ -192,8 +192,8 @@ phases:
 EOBS
 )
 
-  # --image-override: a project created before the image update still has the
-  # old image, which has no Node.js 26.
+  # --image-override: destroy does not update the project, so run it on the
+  # same image as new projects even if the project was created with an older one.
   BUILD_ID=$(aws codebuild start-build \
     --project-name "$CB_PROJECT_NAME" \
     --environment-variables-override "$ENV_OVERRIDES" \

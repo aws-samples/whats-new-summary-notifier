@@ -552,7 +552,8 @@ app.post('/api/deploy/destroy', async (req, res) => {
       sourceTypeOverride: 'S3',
       sourceLocationOverride: `${bucket}/${key}`,
       buildspecOverride: destroyBuildspec,
-      // A project created before the image update still has the old image, which has no Node.js 26
+      // Destroy does not update the project, so run it on the same image as new
+      // projects even if the project was created with an older one
       imageOverride: CODEBUILD_IMAGE,
       environmentVariablesOverride: [
         { name: 'TENANT', value: actualTenant, type: 'PLAINTEXT' },

@@ -27,8 +27,9 @@ export interface ProjectApi {
 }
 
 // Create the project, or update an existing one. The update sets the same
-// environment as a new project, so a project created with an older image
-// (for example standard:5.0) moves to the current one. The service role is
+// environment as a new project, as the deploy.sh update already does, so
+// existing projects stay on the same image as new ones and a later change to
+// CODEBUILD_IMAGE reaches Console-created projects too. The service role is
 // left as it is.
 export async function ensureCodeBuildProject(api: ProjectApi, name: string, roleArn: string, s3Bucket: string, s3Key: string) {
   const source = { type: 'S3' as const, location: `${s3Bucket}/${s3Key}` };
