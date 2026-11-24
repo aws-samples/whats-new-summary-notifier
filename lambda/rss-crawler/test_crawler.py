@@ -3,6 +3,7 @@
 import importlib.util
 import os
 import sys
+from typing import ClassVar
 from unittest.mock import MagicMock
 
 os.environ.setdefault("DDB_TABLE_NAME", "test-table")
@@ -149,3 +150,74 @@ class TestAddBlog:
         items = _items(monkeypatch, [entry], ["general:products/amazon-s3"])
         assert items[0]["filter_result"] == "excluded:categories"
         assert items[0]["rss_description"] == "<p>d</p>"
+
+
+class _FakeClientError(Exception):
+    def __init__(self, code):
+        super().__init__(code)
+        self.response = {"Error": {"Code": code}}
+
+
+class _ConditionalTable:
+    """A table that applies the crawler's "does not exist yet" condition like DynamoDB does
+
+    The table key is (url, notifier_name), so attribute_not_exists(url) fails only when an
+    item with the same url and notifier_name exists.
+    """
+
+    def __init__(self, items):
+        self.items = {(i["url"], i["notifier_name"]): dict(i) for i in items}
+
+    def put_item(self, Item, ConditionExpression=None, ExpressionAttributeNames=None):
+        key = (Item["url"], Item["notifier_name"])
+        conditional = ConditionExpression == "attribute_not_exists(#url)" and ExpressionAttributeNames == {"#url": "url"}
+        if conditional and key in self.items:
+            raise _FakeClientError("ConditionalCheckFailedException")
+        self.items[key] = dict(Item)
+
+
+class TestConditionalWrite:
+    SUMMARIZED: ClassVar[dict] = {
+        "url": "https://e/a", "notifier_name": "N", "title": "T", "category": "What's new",
+        "pubtime": "2026-11-24T00:00:00", "summary": "sum", "detail": "- d", "summary_status": "completed",
+    }
+    FILTERED: ClassVar[dict] = {
+        "url": "https://e/b", "notifier_name": "N", "title": "B", "category": "What's new",
+        "pubtime": "2026-11-24T00:00:00", "summary_status": "filtered",
+    }
+
+    def _crawl(self, monkeypatch, existing, entries, categories):
+        table = _ConditionalTable(existing)
+        monkeypatch.setattr(crawler, "table", table)
+        monkeypatch.setattr(crawler, "ClientError", _FakeClientError)
+        monkeypatch.setattr(crawler, "recently_published", lambda pub: True)
+        crawler.add_blog("What's new", entries, "N", categories)
+        return table.items
+
+    def test_put_item_is_conditional(self, monkeypatch):
+        table = _put_items(monkeypatch)
+        crawler.write_to_table("https://e/a", "T", "c", "t", "N", "<p>d</p>", filter_result="excluded:categories")
+        kwargs = table.put_item.call_args.kwargs
+        assert kwargs["ConditionExpression"] == "attribute_not_exists(#url)"
+        assert kwargs["ExpressionAttributeNames"] == {"#url": "url"}
+
+    def test_new_post_is_written_with_description_and_filter_result(self, monkeypatch):
+        entry = {**_entry(WHATS_NEW_TAGS), "link": "https://e/new", "summary": "<p>d</p>"}
+        items = self._crawl(monkeypatch, [], [entry], ["general:products/amazon-s3"])
+        new = items[("https://e/new", "N")]
+        assert new["rss_description"] == "<p>d</p>"
+        assert new["filter_result"] == "excluded:categories"
+
+    def test_recrawl_keeps_the_summary_and_the_filtered_status(self, monkeypatch):
+        entries = [
+            {**_entry(WHATS_NEW_TAGS), "link": "https://e/a", "summary": "<p>d</p>"},
+            {**_entry(WHATS_NEW_TAGS), "link": "https://e/b", "summary": "<p>d</p>"},
+        ]
+        items = self._crawl(monkeypatch, [self.SUMMARIZED, self.FILTERED], entries, ["general:products/amazon-s3"])
+        assert items[("https://e/a", "N")] == self.SUMMARIZED
+        assert items[("https://e/b", "N")] == self.FILTERED
+
+    def test_same_url_for_another_notifier_is_still_written(self, monkeypatch):
+        items = self._crawl(monkeypatch, [{**self.SUMMARIZED, "notifier_name": "Other"}], [_entry()], [])
+        assert items[("https://e/a", "N")]["title"] == "T"
+        assert items[("https://e/a", "Other")]["summary"] == "sum"

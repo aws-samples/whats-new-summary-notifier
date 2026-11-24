@@ -3,7 +3,10 @@
 import json
 import os
 import sys
+import urllib.error
 from unittest.mock import MagicMock
+
+import pytest
 
 # Set env vars before importing the module
 os.environ["MODEL_IDS"] = json.dumps(["model-a", "model-b"])
@@ -120,6 +123,17 @@ class TestCreateTeamsMessage:
         # Check action URL
         assert card["actions"][0]["url"] == "https://example.com"
 
+    def test_matches_workflows_webhook_schema(self):
+        """The body matches the Workflows webhook trigger's Adaptive Card schema."""
+        item = {"rss_title": "T", "rss_link": "https://example.com", "summary": "s", "detail": "- d"}
+        msg = index.create_teams_message(item)
+        attachment = msg["attachments"][0]
+        assert set(attachment) == {"contentType", "contentUrl", "content"}
+        assert attachment["contentType"] == "application/vnd.microsoft.card.adaptive"
+        assert attachment["contentUrl"] is None
+        # Workflows webhooks support every Adaptive Card element except Action.Submit
+        assert "Action.Submit" not in json.dumps(msg)
+
 
 GC_ITEM = {
     "rss_title": "New <feature> | launch",
@@ -182,6 +196,12 @@ class TestPushNotificationDestination:
     def test_googlechat(self, monkeypatch):
         assert self._push(monkeypatch, "googlechat") == [{"text": "<https://example.com/a|T>\nsum\n\n- d"}]
 
+    def test_teams(self, monkeypatch):
+        posted = self._push(monkeypatch, "teams")
+        assert posted[0]["type"] == "message"
+        assert posted[0]["attachments"][0]["contentUrl"] is None
+        assert posted[0]["attachments"][0]["content"]["type"] == "AdaptiveCard"
+
     def test_slack_is_unchanged(self, monkeypatch):
         posted = self._push(monkeypatch, "slack")
         assert posted[0]["rss_title"] == "T" and posted[0]["summary"] == "sum"
@@ -202,9 +222,9 @@ class TestModelIds:
 
 
 class _FakeClientError(Exception):
-    def __init__(self, code):
+    def __init__(self, code, status=400):
         super().__init__(code)
-        self.response = {"Error": {"Code": code}}
+        self.response = {"Error": {"Code": code}, "ResponseMetadata": {"HTTPStatusCode": status}}
 
 
 class TestSummarizeBlog:
@@ -491,7 +511,7 @@ class TestPushNotificationFallback:
         item = {"rss_title": "T", "rss_link": "https://example.com/a", "rss_time": "t", "rss_category": "c",
                 "rss_notifier_name": "TestNotifier", "rss_description": description}
         index.push_notification([item])
-        sources = [u["ExpressionAttributeValues"][":src"] for u in updates]
+        sources = [u["ExpressionAttributeValues"][":src"] for u in updates if ":src" in u["ExpressionAttributeValues"]]
         return summarized, sources
 
     def test_uses_article_when_long_enough(self, monkeypatch):
@@ -509,3 +529,211 @@ class TestPushNotificationFallback:
 
     def test_skips_when_nothing_is_available(self, monkeypatch):
         assert self._push(monkeypatch, None, "") == ([], [])
+
+
+class _FakeBotoConnectionError(Exception):
+    """Stands in for botocore's ConnectionError (EndpointConnectionError, ConnectTimeoutError)."""
+
+
+class _FakeBotoHTTPClientError(Exception):
+    """Stands in for botocore's HTTPClientError (ReadTimeoutError)."""
+
+
+def _http_error(code):
+    return urllib.error.HTTPError("https://hooks.example.com/x", code, "error", {}, None)
+
+
+@pytest.fixture
+def real_error_classes(monkeypatch):
+    # botocore is mocked for the whole module; give the classifier real exception classes
+    monkeypatch.setattr(index, "ClientError", _FakeClientError)
+    monkeypatch.setattr(index, "BotoConnectionError", _FakeBotoConnectionError)
+    monkeypatch.setattr(index, "BotoHTTPClientError", _FakeBotoHTTPClientError)
+
+
+@pytest.mark.usefixtures("real_error_classes")
+class TestIsRetryable:
+    @pytest.mark.parametrize(
+        "error",
+        [
+            _FakeClientError("ThrottlingException"),
+            _FakeClientError("ServiceUnavailableException", 503),
+            _FakeClientError("InternalServerException", 500),
+            _FakeClientError("ModelNotReadyException", 429),
+            _FakeClientError("SomethingNew", 502),
+            _FakeBotoConnectionError("connect timeout"),
+            _FakeBotoHTTPClientError("read timeout"),
+            _http_error(429),
+            _http_error(500),
+            _http_error(503),
+            urllib.error.URLError("connection refused"),
+            TimeoutError("timed out"),
+            index.RetryableError("not enough time"),
+        ],
+    )
+    def test_retryable(self, error):
+        assert index.is_retryable(error)
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            _FakeClientError("AccessDeniedException", 403),
+            _FakeClientError("ValidationException", 400),
+            _FakeClientError("ParameterNotFound", 400),
+            _http_error(400),
+            _http_error(403),
+            _http_error(404),
+            index.MaybePostedError("no answer"),
+            ValueError("unexpected output"),
+            KeyError("rss_link"),
+        ],
+    )
+    def test_not_retryable(self, error):
+        assert not index.is_retryable(error)
+
+
+@pytest.mark.usefixtures("real_error_classes")
+class TestHandlerFailures:
+    """The handler re-raises only failures before the post that a retry may fix."""
+
+    def _run(self, monkeypatch, summarize_error=None, post_error=None, update_error=None, content="body",
+             remaining_ms=None):
+        events, updates = [], []
+
+        class _Res:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b"ok"
+
+        notifier = {"destination": "slack", "summarizerName": "TestSummarizer", "webhookUrlParameterName": "/p"}
+        monkeypatch.setattr(index, "NOTIFIERS", {"N": notifier})
+        ssm = MagicMock()
+        ssm.get_parameter.return_value = {"Parameter": {"Value": "https://hooks.example.com/x"}}
+        monkeypatch.setattr(index, "ssm", ssm)
+
+        def fake_update(**kw):
+            status = kw["ExpressionAttributeValues"][":st"]
+            events.append(f"write {status}")
+            updates.append(kw)
+            if update_error is not None and status == "completed":
+                raise update_error
+
+        table = MagicMock()
+        table.update_item.side_effect = fake_update
+        monkeypatch.setattr(index, "ddb_table", table)
+        monkeypatch.setattr(index, "get_blog_content", lambda url: content)
+        monkeypatch.setattr(index.article, "description_text", lambda d: d)
+
+        def fake_summarize(*a, **k):
+            events.append("summarize")
+            if summarize_error is not None:
+                raise summarize_error
+            return "sum", "- d", {"model_id": "m", "latency_sec": 1, "input_tokens": 1, "output_tokens": 1}
+
+        def fake_urlopen(req, timeout=None):
+            events.append(f"post timeout={timeout}")
+            if post_error is not None:
+                raise post_error
+            return _Res()
+
+        monkeypatch.setattr(index, "summarize_blog", fake_summarize)
+        monkeypatch.setattr(index.urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setattr(index.time, "sleep", lambda s: None)
+        image = {"category": {"S": "c"}, "pubtime": {"S": "t"}, "title": {"S": "T"},
+                 "url": {"S": "https://example.com/a"}, "notifier_name": {"S": "N"}}
+        context = None
+        if remaining_ms is not None:
+            context = MagicMock()
+            context.get_remaining_time_in_millis.return_value = remaining_ms
+        try:
+            index.handler({"Records": [{"eventName": "INSERT", "dynamodb": {"NewImage": image}}]}, context)
+        except Exception as error:  # noqa: BLE001
+            return events, updates, error
+        return events, updates, None
+
+    @staticmethod
+    def _failure(updates):
+        failed = [u["ExpressionAttributeValues"] for u in updates if u["ExpressionAttributeValues"][":st"] == "failed"]
+        assert len(failed) == 1
+        return failed[0][":r"]
+
+    def test_success_writes_completed_after_the_post(self, monkeypatch):
+        events, _, error = self._run(monkeypatch, remaining_ms=170_000)
+        assert error is None
+        assert events == ["summarize", f"post timeout={index.WEBHOOK_TIMEOUT_SEC}", "write completed"]
+
+    def test_bedrock_throttling_is_retried(self, monkeypatch):
+        events, updates, error = self._run(monkeypatch, summarize_error=_FakeClientError("ThrottlingException"))
+        assert isinstance(error, _FakeClientError)
+        assert events == ["summarize"] and updates == []
+
+    def test_bedrock_timeout_is_retried(self, monkeypatch):
+        _, updates, error = self._run(monkeypatch, summarize_error=_FakeBotoHTTPClientError("read timeout"))
+        assert isinstance(error, _FakeBotoHTTPClientError) and updates == []
+
+    def test_bedrock_access_denied_is_marked_failed(self, monkeypatch):
+        events, updates, error = self._run(monkeypatch, summarize_error=_FakeClientError("AccessDeniedException", 403))
+        assert error is None
+        assert events == ["summarize", "write failed"]
+        assert "AccessDeniedException" in self._failure(updates)
+
+    def test_no_text_is_marked_failed(self, monkeypatch):
+        events, updates, error = self._run(monkeypatch, content=None)
+        assert error is None and events == ["write failed"]
+        assert self._failure(updates) == "no article text and no RSS description"
+
+    @pytest.mark.parametrize("code", [429, 500, 503])
+    def test_webhook_429_and_5xx_are_retried_without_completed(self, monkeypatch, code):
+        events, updates, error = self._run(monkeypatch, post_error=_http_error(code))
+        assert isinstance(error, urllib.error.HTTPError)
+        assert "write completed" not in events and updates == []
+
+    def test_webhook_4xx_is_marked_failed(self, monkeypatch):
+        events, updates, error = self._run(monkeypatch, post_error=_http_error(400))
+        assert error is None
+        assert events[-1] == "write failed" and "write completed" not in events
+        assert "HTTP Error 400" in self._failure(updates)
+
+    def test_webhook_not_reached_is_retried(self, monkeypatch):
+        # urllib raises URLError when the request could not be sent (connect timeout, refused)
+        _, updates, error = self._run(monkeypatch, post_error=urllib.error.URLError(TimeoutError("timed out")))
+        assert isinstance(error, urllib.error.URLError) and updates == []
+
+    def test_no_answer_after_the_request_is_sent_is_not_retried(self, monkeypatch):
+        # A timeout while waiting for the status comes through unwrapped: the message may be posted
+        events, updates, error = self._run(monkeypatch, post_error=TimeoutError("timed out"))
+        assert error is None
+        assert events[-1] == "write failed"
+        assert "may have been posted" in self._failure(updates)
+
+    def test_failure_after_the_post_is_not_retried(self, monkeypatch):
+        # A retryable error after a successful post must not make the event source post again
+        events, _, error = self._run(monkeypatch, update_error=_FakeClientError("ThrottlingException"))
+        assert error is None
+        assert events == ["summarize", f"post timeout={index.WEBHOOK_TIMEOUT_SEC}", "write completed"]
+
+    def test_too_little_time_left_is_retried_before_the_post(self, monkeypatch):
+        events, updates, error = self._run(monkeypatch, remaining_ms=index.MIN_POST_TIME_MS - 1)
+        assert isinstance(error, index.RetryableError)
+        assert events == ["summarize"] and updates == []
+
+
+class TestPostToWebhook:
+    def test_body_read_error_after_the_status_counts_as_posted(self, monkeypatch):
+        class _Res:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                raise TimeoutError("timed out")
+
+        monkeypatch.setattr(index.urllib.request, "urlopen", lambda req, timeout=None: _Res())
+        index.post_to_webhook("https://hooks.example.com/x", b"{}")

@@ -10,7 +10,15 @@ Deploy using [AWS CloudShell](https://console.aws.amazon.com/cloudshell/home) â€
 Refer to [Slack Workflow documentation](https://slack.com/help/articles/17542172840595-Build-a-workflow--Create-a-workflow-in-Slack). Create a workflow with 5 text variables: `rss_time`, `rss_link`, `rss_title`, `summary`, `detail`.
 
 #### For Microsoft Teams
-Refer to [Teams Incoming Webhook documentation](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook?tabs=newteams%2Cdotnet).
+Microsoft retired Office 365 connectors in Teams, including the connector-based Incoming Webhook, in May 2026. Create the webhook with the Workflows app instead ([Create an Incoming Webhook](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook), [Send messages in Teams using incoming webhooks](https://support.microsoft.com/en-us/office/send-messages-in-teams-using-incoming-webhooks-323660ec-12ca-40b1-a1d3-a3df47e808c4)):
+
+1. In Teams, go to the channel, select **More options (...)** next to it, and select **Workflows**.
+2. Select the **Send webhook alerts to a channel** template. The notifier sends no sign-in token, so the templates "from specific people" and "from people in an org" do not work with it.
+3. Choose the team and channel, select **Save**, and copy the webhook URL shown on the workflow's details page.
+
+Posts appear under the Workflows bot. Anyone who has the URL can post to the channel, so keep it secret. The workflow belongs to the person who created it; add a co-owner so that it keeps working if that person leaves.
+
+If you deployed with a connector URL before, it no longer works. Create a workflow as above and put its URL in the same SSM parameter (`/WhatsNew/URL`, or `/WhatsNew/URL/<tenant>`), for example by editing the parameter in Systems Manager Parameter Store or by running `bash deploy.sh` again. The notify Lambda reads the parameter for every article, so it uses the new URL without a redeploy.
 
 #### For Google Chat (preview)
 Google Chat support is a preview and has not been tested against a real Google Chat space yet. Refer to [Google Chat incoming webhooks](https://developers.google.com/workspace/chat/quickstart/webhooks): register a webhook in the space (Apps & integrations > Add webhooks) and copy its URL. Your Google Workspace organization must allow incoming webhooks. Keep the URL secret; it contains a token.
@@ -168,9 +176,16 @@ Without `filter`, every new article is summarized and posted, as before. Add `fi
 Each `topics` check is one more Bedrock call per article that passes `categories`. Changing or removing `filter` later does not post the articles that were filtered out before. `cdk synth` fails with a message when `filter` has the wrong shape or makes the settings too large for a Lambda environment (4 KB) or an EventBridge target input (8,192 characters).
 
 ### How articles are read
-The notify Lambda opens each article URL from the RSS feed and summarizes the text of its `<main>` element, or `<article>`, or `<body>` (without navigation, headers, footers and scripts), up to 50,000 characters. When the page cannot be fetched or has less than 200 characters of text, the RSS description of the entry is summarized instead; the entry is skipped only when neither is available. `summary_source` in the DynamoDB item shows which one was used.
+The notify Lambda opens each article URL from the RSS feed and summarizes the text of its `<main>` element, or `<article>`, or `<body>` (without navigation, headers, footers and scripts), up to 50,000 characters. When the page cannot be fetched or has less than 200 characters of text, the RSS description of the entry is summarized instead; when neither is available, the article is not posted and its item gets `summary_status` = `failed`. `summary_source` in the DynamoDB item shows which one was used.
 
 Requests send a `whats-new-summary-notifier` User-Agent and go only to public `http`/`https` addresses (checked again on every redirect, at most 5), with a 10-second timeout, a 20-second limit for the whole download and a 5 MB size limit.
+
+### When an article is not notified
+Some failures before the post may not happen again on a later attempt: Bedrock throttling or a 5xx error, a webhook that answers 429 or 5xx, a connection that cannot be made, or a timeout. For these, the notify Lambda fails, and Lambda retries the article up to 2 times. An article that has waited in the stream for more than 6 hours is not retried.
+
+Any other failure (no text to summarize, a webhook 4xx, no access to the model) is written to the DynamoDB item as `summary_status` = `failed` with a `failure_reason`, and the article is not retried. When the webhook request was sent but no answer came back within 10 seconds, the article is also marked `failed`, because it may already have been posted. A retry never posts an article twice.
+
+When the retries do not help, Lambda sends a message about the failed stream record (not the article itself) to the SQS queue whose name contains `NotifyFailureQueue`, which keeps messages for 14 days. The stack creates two CloudWatch alarms without actions: one when that queue has a message, and one when the notify Lambda is more than 30 minutes behind the stream (`IteratorAge`). To be told, add an action such as an SNS topic to the alarms in CloudWatch. To find articles that were not posted, look for items whose `summary_status` is `failed`, or is not set on an item without a `filter_result`.
 
 ## Destroy
 
@@ -181,4 +196,32 @@ bash deploy.sh --destroy --tenant test  # specific tenant
 
 The script deletes the CDK stack with a CodeBuild build and waits for that build to finish. When the build succeeds, it cleans up the CodeBuild project, IAM role, and SSM parameter. When the build fails, it keeps them and exits with an error, so you can check the build logs and run the same command again.
 
+If the script stops while it waits for the build (you press Ctrl+C, close the terminal, or the CloudShell session ends), the build keeps running in CodeBuild, but the cleanup does not run, so the CodeBuild project, IAM role, and SSM parameter stay. Run the same `deploy.sh --destroy` command again. It starts another destroy build, which succeeds even when the stack is already gone, and then cleans up the three resources.
+
 For manual cleanup: `cdk destroy` or `cdk destroy -c tenant=test`
+
+### What remains after destroy
+
+Deleting the stack does not delete everything. These resources stay in the account and Region.
+
+| Resource | Name | Why it stays |
+|---|---|---|
+| DynamoDB table (the RSS history) | `<stack name>-WhatsNewRSSHistory...` | The table uses the CDK default removal policy `RETAIN`, so CloudFormation skips it (`DELETE_SKIPPED`) |
+| Lambda log groups (3) | `/aws/lambda/<stack name>-NotifyNewEntry...`, `-newsCrawler...`, `-LogRetention...` | The functions set `logRetention`; CDK creates these log groups outside the stack, so they are not deleted with it |
+| CodeBuild log group | `/aws/codebuild/whats-new-summary-notifier[-<tenant>]` | CodeBuild creates it; `deploy.sh` deletes the project but not its logs |
+| CDKToolkit stack and its assets bucket | `CDKToolkit`, `cdk-hnb659fds-assets-<account>-<region>` | Created by `cdk bootstrap` and shared by every CDK app in the account and Region. Deleting CDKToolkit also keeps the bucket (`DELETE_SKIPPED`) |
+
+`<stack name>` is `WhatsNewSummaryNotifierStack`, or `WhatsNewSummaryNotifier-<tenant>` for a tenant (long names are shortened in the log group names). To remove them, after the destroy has finished:
+
+```bash
+# DynamoDB table (this deletes the stored articles and their summaries)
+aws dynamodb list-tables --query "TableNames[?contains(@, 'WhatsNewRSSHistory')]"
+aws dynamodb delete-table --table-name <table name>
+
+# Log groups
+aws logs describe-log-groups --log-group-name-prefix /aws/lambda/WhatsNewSummaryNotifier --query 'logGroups[].logGroupName'
+aws logs describe-log-groups --log-group-name-prefix /aws/codebuild/whats-new-summary-notifier --query 'logGroups[].logGroupName'
+aws logs delete-log-group --log-group-name <log group name>
+```
+
+Delete CDKToolkit only when no other CDK app in the account and Region uses it. The assets bucket is versioned, so delete every object version and delete marker before you delete the bucket (for example, empty it in the S3 console, then delete it). The tables and log groups of other tenants and other stacks may match the same prefixes, so check each name before you delete it.
