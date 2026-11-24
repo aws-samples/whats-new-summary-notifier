@@ -49,6 +49,7 @@ import {
   type BucketLocationConstraint,
 } from '@aws-sdk/client-s3';
 import { execSync } from 'child_process';
+import { CODEBUILD_IMAGE, ensureCodeBuildProject as ensureProject } from './codebuild';
 
 const API_PORT = 3456;
 const UI_PORT = 5173;
@@ -74,7 +75,6 @@ const qs = (v: unknown): string => (Array.isArray(v) ? v[0] : v as string) ?? ''
 
 // Deploy constants
 const PROJECT_PREFIX = 'whats-new-summary-notifier';
-const CODEBUILD_IMAGE = 'aws/codebuild/amazonlinux-x86_64-standard:6.0';
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 
 const CACHE_DIR = path.resolve(__dirname, '../../tenants/.cache');
@@ -336,24 +336,11 @@ async function ensureIamRole(iam: IAMClient, roleName: string): Promise<string> 
   }
 }
 
-async function ensureCodeBuildProject(cb: CodeBuildClient, name: string, roleArn: string, s3Bucket: string, s3Key: string) {
-  const source = { type: 'S3' as const, location: `${s3Bucket}/${s3Key}` };
-  const environment = {
-    type: 'LINUX_CONTAINER' as const,
-    image: CODEBUILD_IMAGE,
-    computeType: 'BUILD_GENERAL1_MEDIUM' as const,
-    privilegedMode: true,
-  };
-  try {
-    await cb.send(new CreateProjectCommand({
-      name, source, artifacts: { type: 'NO_ARTIFACTS' as const }, environment, serviceRole: roleArn, timeoutInMinutes: 30,
-    }));
-  } catch (e: any) {
-    if (e.name === 'ResourceAlreadyExistsException') {
-      // Update only source location (preserve existing role)
-      await cb.send(new UpdateProjectCommand({ name, source }));
-    } else throw e;
-  }
+function ensureCodeBuildProject(cb: CodeBuildClient, name: string, roleArn: string, s3Bucket: string, s3Key: string) {
+  return ensureProject({
+    createProject: (input) => cb.send(new CreateProjectCommand(input)),
+    updateProject: (input) => cb.send(new UpdateProjectCommand(input)),
+  }, name, roleArn, s3Bucket, s3Key);
 }
 
 // Regions where S3 account regional namespace buckets cannot be created
@@ -565,6 +552,9 @@ app.post('/api/deploy/destroy', async (req, res) => {
       sourceTypeOverride: 'S3',
       sourceLocationOverride: `${bucket}/${key}`,
       buildspecOverride: destroyBuildspec,
+      // Destroy does not update the project, so run it on the same image as new
+      // projects even if the project was created with an older one
+      imageOverride: CODEBUILD_IMAGE,
       environmentVariablesOverride: [
         { name: 'TENANT', value: actualTenant, type: 'PLAINTEXT' },
         { name: 'DEPLOY_ACTION', value: 'destroy', type: 'PLAINTEXT' },

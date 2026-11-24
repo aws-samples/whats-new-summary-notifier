@@ -192,10 +192,13 @@ phases:
 EOBS
 )
 
+  # --image-override: destroy does not update the project, so run it on the
+  # same image as new projects even if the project was created with an older one.
   BUILD_ID=$(aws codebuild start-build \
     --project-name "$CB_PROJECT_NAME" \
     --environment-variables-override "$ENV_OVERRIDES" \
     --buildspec-override "$BUILDSPEC_OVERRIDE" \
+    --image-override "$CODEBUILD_IMAGE" \
     --query 'build.id' --output text 2>/dev/null || echo "")
 
   if [[ -z "$BUILD_ID" ]]; then
