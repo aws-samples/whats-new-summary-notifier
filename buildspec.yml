@@ -3,7 +3,7 @@ version: 0.2
 phases:
   install:
     runtime-versions:
-      nodejs: 22
+      nodejs: 26
       python: 3.14
     commands:
       # npm ci installs the aws-cdk CLI version locked in package-lock.json;

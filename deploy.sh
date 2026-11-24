@@ -180,7 +180,7 @@ version: 0.2
 phases:
   install:
     runtime-versions:
-      nodejs: 22
+      nodejs: 26
     commands:
       - npm ci
   build:

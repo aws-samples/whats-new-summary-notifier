@@ -549,7 +549,7 @@ app.post('/api/deploy/destroy', async (req, res) => {
       'phases:',
       '  install:',
       '    runtime-versions:',
-      '      nodejs: 22',
+      '      nodejs: 26',
       '    commands:',
       '      - npm ci',
       '  build:',
