@@ -12,6 +12,9 @@ Refer to [Slack Workflow documentation](https://slack.com/help/articles/17542172
 #### For Microsoft Teams
 Refer to [Teams Incoming Webhook documentation](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook?tabs=newteams%2Cdotnet).
 
+#### For Google Chat (preview)
+Google Chat support is a preview and has not been tested against a real Google Chat space yet. Refer to [Google Chat incoming webhooks](https://developers.google.com/workspace/chat/quickstart/webhooks): register a webhook in the space (Apps & integrations > Add webhooks) and copy its URL. Your Google Workspace organization must allow incoming webhooks. Keep the URL secret; it contains a token.
+
 ### 2. Deploy
 
 Open [CloudShell](https://console.aws.amazon.com/cloudshell/home) and run:
@@ -133,7 +136,7 @@ Settings are managed in `cdk.json` under `context`.
 ### notifiers
 | Key | Description |
 |---|---|
-| `destination` | `slack` or `teams` |
+| `destination` | `slack`, `teams` or `googlechat` (Google Chat is a preview, not yet tested against a real space) |
 | `summarizerName` | Name of the summarizer to use |
 | `webhookUrlParameterName` | SSM Parameter Store name for Webhook URL |
 | `rssUrl` | RSS feed URLs (multiple supported) |

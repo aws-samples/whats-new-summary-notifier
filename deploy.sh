@@ -57,7 +57,8 @@ Usage: bash deploy.sh [OPTIONS]
 
 Options:
   --tenant NAME         Tenant name for multi-tenant deployment (optional)
-  --destination TYPE    Notification destination: slack or teams (default: slack)
+  --destination TYPE    Notification destination: slack, teams or googlechat
+                        (Google Chat is a preview; default: slack)
   --language LANG       Summary language: japanese or english (default: japanese)
   --webhook-url URL     Webhook URL for notifications
   --ssm-param NAME      SSM Parameter Store name (default: auto-generated)
@@ -107,13 +108,16 @@ if [[ "$NON_INTERACTIVE" == false && "$DESTROY" == false ]]; then
   echo "Notification destination:"
   echo "  1) Slack"
   echo "  2) Microsoft Teams"
-  if [[ -z "$DESTINATION" || "$DESTINATION" == "slack" ]]; then
-    read -rp "Select [1]: " dest_choice
-  else
-    read -rp "Select [2]: " dest_choice
-  fi
-  case "${dest_choice:-1}" in
+  echo "  3) Google Chat (preview)"
+  case "$DESTINATION" in
+    teams)      dest_default=2 ;;
+    googlechat) dest_default=3 ;;
+    *)          dest_default=1 ;;
+  esac
+  read -rp "Select [$dest_default]: " dest_choice
+  case "${dest_choice:-$dest_default}" in
     2) DESTINATION="teams" ;;
+    3) DESTINATION="googlechat" ;;
     *) DESTINATION="slack" ;;
   esac
 
@@ -130,6 +134,11 @@ if [[ "$NON_INTERACTIVE" == false && "$DESTROY" == false ]]; then
   echo ""
   ask_required "Webhook URL" WEBHOOK_URL
 fi
+
+case "$DESTINATION" in
+  slack|teams|googlechat) ;;
+  *) echo "Unknown destination: $DESTINATION (use slack, teams or googlechat)"; exit 1 ;;
+esac
 
 #-----------------------------------------------------------------------------
 # Derived values
