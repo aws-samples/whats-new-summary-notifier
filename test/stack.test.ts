@@ -50,7 +50,7 @@ describe('WhatsNewSummaryNotifierStack', () => {
     const template = createStack();
     template.hasResourceProperties('AWS::Lambda::Function', {
       Handler: 'index.handler',
-      Runtime: 'python3.14',
+      Runtime: 'python3.15',
       Timeout: 180,
       Environment: {
         Variables: Match.objectLike({
