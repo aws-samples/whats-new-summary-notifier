@@ -3,7 +3,7 @@
 ## IaC / インフラ
 - AWS CDK v2（TypeScript）— aws-cdk-lib ^2.278.0
 - `@aws-cdk/aws-lambda-python-alpha` で Python Lambda をビルド（Docker 必須）
-- CodeBuild によるリモートデプロイ（deploy.sh 経由、イメージ `aws/codebuild/amazonlinux-x86_64-standard:6.0`、CDK CLI は package.json の `aws-cdk` を `npx cdk` で使用）
+- CodeBuild によるリモートデプロイ（deploy.sh と Management Console 経由、イメージ `aws/codebuild/amazonlinux-x86_64-standard:6.0`、CDK CLI は package.json の `aws-cdk` を `npx cdk` で使用）。既存の CodeBuild プロジェクトも、再デプロイ（Console の update を含む）でこのイメージに更新し、destroy のビルドは `imageOverride` でこのイメージを使う。Console のイメージと環境の設定は `console/server/codebuild.ts` にある
 
 ## Lambda ランタイム
 - Python 3.15（Lambda）/ Python 3.15（CodeBuild）

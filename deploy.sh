@@ -192,10 +192,13 @@ phases:
 EOBS
 )
 
+  # --image-override: a project created before the image update still has the
+  # old image, which has no Node.js 26.
   BUILD_ID=$(aws codebuild start-build \
     --project-name "$CB_PROJECT_NAME" \
     --environment-variables-override "$ENV_OVERRIDES" \
     --buildspec-override "$BUILDSPEC_OVERRIDE" \
+    --image-override "$CODEBUILD_IMAGE" \
     --query 'build.id' --output text 2>/dev/null || echo "")
 
   if [[ -z "$BUILD_ID" ]]; then
