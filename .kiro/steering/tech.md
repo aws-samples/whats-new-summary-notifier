@@ -18,7 +18,7 @@
 - AWS CodeBuild（deploy.sh からのリモートデプロイ）
 
 ## 開発ツール
-- TypeScript ~5.9 / Node.js 22+（target: ES2022。CI と CodeBuild は Node.js 26）
+- TypeScript ~5.9 / Node.js 22+（target: ES2022。CI の test は Node.js 22・24・26、その他の CI ジョブと CodeBuild は Node.js 26）
 - ESLint 9（flat config） + Prettier
 - Jest 29 + ts-jest（TypeScript テスト）
 - pytest（Python テスト）— `uv run` 経由で実行
