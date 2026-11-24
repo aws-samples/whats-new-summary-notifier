@@ -11,6 +11,49 @@ import { RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { StringParameter } from 'aws-cdk-lib/aws-ssm';
 import * as path from 'path';
 
+// Lambda allows 4 KB for all environment variables of a function, and an EventBridge
+// target input is at most 8,192 characters.
+const LAMBDA_ENV_LIMIT_BYTES = 4096;
+const EVENT_INPUT_LIMIT_CHARS = 8192;
+// The table name is a token at synth time; count the longest name DynamoDB allows.
+const TABLE_NAME_MAX_BYTES = 255;
+
+/**
+ * Check the optional `filter` of each notifier. Notifiers without a filter are not checked,
+ * so configurations that synthesized before keep synthesizing unchanged.
+ */
+export function validateNotifierFilters(notifiers: Record<string, Record<string, unknown>>, environments: Record<string, string>[]): void {
+  let anyFilter = false;
+  for (const [name, notifier] of Object.entries(notifiers ?? {})) {
+    const filter = notifier?.['filter'];
+    if (filter === undefined) continue;
+    anyFilter = true;
+    if (typeof filter !== 'object' || filter === null || Array.isArray(filter)) {
+      throw new Error(`notifiers.${name}.filter must be an object`);
+    }
+    for (const key of ['categories', 'topics', 'modelIds']) {
+      const value = (filter as Record<string, unknown>)[key];
+      if (value !== undefined && !(Array.isArray(value) && value.every((v) => typeof v === 'string'))) {
+        throw new Error(`notifiers.${name}.filter.${key} must be an array of strings`);
+      }
+    }
+    const input = JSON.stringify({ notifierName: name, notifier });
+    if (input.length > EVENT_INPUT_LIMIT_CHARS) {
+      throw new Error(`notifiers.${name} is ${input.length} characters as an EventBridge target input (limit ${EVENT_INPUT_LIMIT_CHARS}); shorten filter.topics`);
+    }
+  }
+  if (!anyFilter) return;
+  for (const env of environments) {
+    const size = Object.entries(env).reduce(
+      (sum, [k, v]) => sum + Buffer.byteLength(k) + (k === 'DDB_TABLE_NAME' ? TABLE_NAME_MAX_BYTES : Buffer.byteLength(v)),
+      0
+    );
+    if (size > LAMBDA_ENV_LIMIT_BYTES) {
+      throw new Error(`Lambda environment variables would be about ${size} bytes (limit ${LAMBDA_ENV_LIMIT_BYTES}); shorten the notifiers' filter settings`);
+    }
+  }
+}
+
 export class WhatsNewSummaryNotifierStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
@@ -22,7 +65,7 @@ export class WhatsNewSummaryNotifierStack extends Stack {
     const modelIds: string[] = this.node.tryGetContext('modelIds');
     const commitHash: string = this.node.tryGetContext('commitHash') ?? 'local';
 
-    const notifiers: [] = this.node.tryGetContext('notifiers');
+    const notifiers = this.node.tryGetContext('notifiers');
     const summarizers: [] = this.node.tryGetContext('summarizers');
 
     // Role for Lambda Function to post new entries written to DynamoDB to Slack or Microsoft Teams
@@ -70,6 +113,19 @@ export class WhatsNewSummaryNotifierStack extends Stack {
       stream: StreamViewType.NEW_IMAGE,
     });
 
+    const notifyEnvironment = {
+      MODEL_IDS: JSON.stringify(modelIds),
+      MODEL_REGION: modelRegion,
+      DDB_TABLE_NAME: rssHistoryTable.tableName,
+      NOTIFIERS: JSON.stringify(notifiers),
+      SUMMARIZERS: JSON.stringify(summarizers),
+    };
+    const crawlerEnvironment = {
+      DDB_TABLE_NAME: rssHistoryTable.tableName,
+      NOTIFIERS: JSON.stringify(notifiers),
+    };
+    validateNotifierFilters(notifiers, [notifyEnvironment, crawlerEnvironment]);
+
     // Lambda Function to post new entries written to DynamoDB to Slack or Microsoft Teams
     const notifyNewEntry = new PythonFunction(this, 'NotifyNewEntry', {
       runtime: Runtime.PYTHON_3_15,
@@ -80,13 +136,7 @@ export class WhatsNewSummaryNotifierStack extends Stack {
       logRetention: RetentionDays.TWO_WEEKS,
       role: notifyNewEntryRole,
       reservedConcurrentExecutions: 1,
-      environment: {
-        MODEL_IDS: JSON.stringify(modelIds),
-        MODEL_REGION: modelRegion,
-        DDB_TABLE_NAME: rssHistoryTable.tableName,
-        NOTIFIERS: JSON.stringify(notifiers),
-        SUMMARIZERS: JSON.stringify(summarizers),
-      },
+      environment: notifyEnvironment,
     });
 
     notifyNewEntry.addEventSource(
@@ -109,10 +159,7 @@ export class WhatsNewSummaryNotifierStack extends Stack {
       timeout: Duration.seconds(60),
       logRetention: RetentionDays.TWO_WEEKS,
       role: newsCrawlerRole,
-      environment: {
-        DDB_TABLE_NAME: rssHistoryTable.tableName,
-        NOTIFIERS: JSON.stringify(notifiers),
-      },
+      environment: crawlerEnvironment,
     });
 
     for (const notifierName in notifiers) {

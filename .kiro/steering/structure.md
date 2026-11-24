@@ -7,7 +7,7 @@
 ├── lib/                          # CDK スタック定義
 │   └── whats-new-summary-notifier-stack.ts
 ├── lambda/                       # Lambda 関数（Python）
-│   ├── rss-crawler/              # RSS フィードのクロール → DynamoDB 書き込み
+│   ├── rss-crawler/              # RSS フィードのクロール（filter.categories の判定）→ DynamoDB 書き込み
 │   │   ├── index.py
 │   │   ├── test_crawler.py       # pytest テスト
 │   │   └── requirements.txt
