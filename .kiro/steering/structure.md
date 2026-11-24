@@ -7,8 +7,9 @@
 ├── lib/                          # CDK スタック定義
 │   └── whats-new-summary-notifier-stack.ts
 ├── lambda/                       # Lambda 関数（Python）
-│   ├── rss-crawler/              # RSS フィードのクロール → DynamoDB 書き込み
+│   ├── rss-crawler/              # RSS フィードのクロール（filter.categories の判定）→ DynamoDB 書き込み
 │   │   ├── index.py
+│   │   ├── test_crawler.py       # pytest テスト
 │   │   └── requirements.txt
 │   └── notify-to-app/            # DynamoDB Streams → Bedrock 要約 → DDB書き戻し → Webhook 通知
 │       ├── index.py
@@ -40,7 +41,7 @@
 ## 規約
 - CDK スタック: `lib/` に配置、1 スタック構成
 - Lambda 関数: `lambda/{機能名}/` に配置、各ディレクトリに `index.py` + `requirements.txt`
-- Lambda テスト: 同ディレクトリに `test_index.py` を配置、pytest で実行
+- Lambda テスト: 同ディレクトリに `test_*.py` を配置、pytest で実行（ファイル名はディレクトリをまたいで重ならないようにする）
 - CDK テスト: `test/` に配置、Jest + ts-jest で実行
 - Lambda は `PythonFunction` コンストラクト（`@aws-cdk/aws-lambda-python-alpha`）でビルド
 - 設定値は `cdk.json` の `context` で一元管理（ハードコードしない）

@@ -138,11 +138,31 @@ cdk deploy
 | `webhookUrlParameterName` | Webhook URL を格納する SSM Parameter Store 名 |
 | `rssUrl` | RSS フィード URL（複数指定可） |
 | `schedule` | （オプション）RSS 取得の CRON スケジュール |
+| `filter` | （オプション）通知する記事の絞り込み。下を参照 |
 
 **スケジュール例**（15 分ごと）:
 ```json
 "schedule": { "minute": "0/15", "hour": "*", "day": "*", "month": "*", "year": "*" }
 ```
+
+### 記事の絞り込み（オプション）
+`filter` を書かなければ、これまでどおり新着記事をすべて要約して通知します。notifier に `filter` を足すと、通知する記事を絞り込めます。
+
+```json
+"filter": {
+  "categories": ["general:products/amazon-bedrock", "marketing:marchitecture/artificial-intelligence"],
+  "topics": ["生成 AI を使ったアプリケーション開発"],
+  "modelIds": ["global.anthropic.claude-haiku-5-5"]
+}
+```
+
+| キー | 説明 |
+|---|---|
+| `categories` | （オプション）RSS のカテゴリタグ。記事のタグのどれかが値と同じか、値に `/` を続けた文字列で始まるときに残します（`general:products` なら製品のタグすべて）。大文字と小文字は区別しません。タグの無い記事は残します。クローラーが判定し、Bedrock は呼びません |
+| `topics` | （オプション）話題を文で書いた一覧。要約の前に、記事がどれかの話題に関係するかをモデルに判定させ、はっきり「関係しない」と答えた記事だけを飛ばします（`summary_status` は `filtered`）。判定に失敗したときや答えがはっきりしないときは通知します |
+| `modelIds` | （オプション）`topics` の判定に使うモデル（順に試します）。省略すると `modelIds` を使います。小さいモデルにすると追加の費用を抑えられます |
+
+`topics` の判定は、`categories` を通った記事 1 件につき Bedrock の呼び出しが 1 回増えます。あとで `filter` を変えたり外したりしても、それまでに外した記事がまとめて通知されることはありません。`filter` の形が誤っているときや、設定が Lambda の環境変数（4 KB）や EventBridge のターゲット入力（8,192 文字）に収まらないときは、`cdk synth` がメッセージを出して止まります。
 
 ## スタックの削除
 
