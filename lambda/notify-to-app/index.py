@@ -8,10 +8,10 @@ import time
 import traceback
 import urllib.request
 
+import article
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
-from bs4 import BeautifulSoup
 
 MODEL_IDS = json.loads(os.environ["MODEL_IDS"])
 MODEL_REGION = os.environ["MODEL_REGION"]
@@ -24,37 +24,18 @@ ddb_table = ddb.Table(os.environ["DDB_TABLE_NAME"])
 
 
 def get_blog_content(url):
-    """Retrieve the content of a blog post
+    """Retrieve the text of a blog post
 
     Args:
         url (str): The URL of the blog post
 
     Returns:
-        str: The content of the blog post, or None if it cannot be retrieved.
+        str: The text of the blog post, or None if it cannot be retrieved.
     """
-
-    try:
-        if url.lower().startswith(("http://", "https://")):
-            # Use the `with` statement to ensure the response is properly closed
-            with urllib.request.urlopen(url) as response:  # nosec B310 # nosemgrep: dynamic-urllib-use-detected
-                html = response.read()
-                if response.getcode() == 200:
-                    soup = BeautifulSoup(html, "html.parser")
-                    main = soup.find("main")
-
-                    if main:
-                        return main.text
-                    else:
-                        print(f"Error parsing {url}, there is no <main> tag in the article")
-                        return None
-
-        else:
-            print(f"Error accessing {url}, unsupported URL scheme")
-            return None
-
-    except urllib.error.URLError as e:
-        print(f"Error accessing {url}: {e.reason}")
-        return None
+    text, reason = article.get_article_text(url)
+    if text is None:
+        print(f"Cannot use {url}: {reason}")
+    return text
 
 
 def get_bedrock_client(
