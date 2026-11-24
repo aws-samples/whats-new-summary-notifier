@@ -30,11 +30,11 @@
     "ts-jest": "^29.4.9",
     "ts-node": "^10.9.2",
     "typescript": "~5.9.3",
-    "typescript-eslint": "^8.58.1"
+    "typescript-eslint": "^8.73.0"
   },
   "dependencies": {
     "@aws-cdk/aws-lambda-python-alpha": "^2.277.0-alpha.0",
-    "aws-cdk-lib": "^2.277.0",
+    "aws-cdk-lib": "^2.278.0",
     "cdk-nag": "^2.37.55",
     "constructs": "^10.6.0",
     "source-map-support": "^0.5.21"
