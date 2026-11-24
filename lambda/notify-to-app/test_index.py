@@ -200,3 +200,80 @@ class TestCleanDetail:
 
     def test_keeps_plain_bullets(self):
         assert index.clean_detail("- a\n- b") == "- a\n- b"
+
+
+class TestGetNewEntriesDescription:
+    """Test that the RSS description is read from the stream record when present."""
+
+    def _record(self, extra):
+        image = {
+            "category": {"S": "c"},
+            "pubtime": {"S": "t"},
+            "title": {"S": "T"},
+            "url": {"S": "https://example.com/a"},
+            "notifier_name": {"S": "TestNotifier"},
+            **extra,
+        }
+        return [{"eventName": "INSERT", "dynamodb": {"NewImage": image}}]
+
+    def test_with_description(self):
+        result = index.get_new_entries(self._record({"rss_description": {"S": "<p>desc</p>"}}))
+        assert result[0]["rss_description"] == "<p>desc</p>"
+
+    def test_without_description(self):
+        assert index.get_new_entries(self._record({}))[0]["rss_description"] == ""
+
+
+class TestPushNotificationFallback:
+    """Test the fallback to the RSS description when the article cannot be used."""
+
+    def _push(self, monkeypatch, content, description):
+        summarized, updates = [], []
+
+        class _Res:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b"ok"
+
+        ssm = MagicMock()
+        ssm.get_parameter.return_value = {"Parameter": {"Value": "https://hooks.example.com/x"}}
+        table = MagicMock()
+        table.update_item.side_effect = lambda **kw: updates.append(kw)
+        monkeypatch.setattr(index, "ssm", ssm)
+        monkeypatch.setattr(index, "ddb_table", table)
+        monkeypatch.setattr(index, "get_blog_content", lambda url: content)
+        monkeypatch.setattr(index.article, "description_text", lambda d: d.replace("<p>", "").replace("</p>", ""))
+
+        def fake_summarize(body, **kwargs):
+            summarized.append(body)
+            return "sum", "- d", {"model_id": "m", "latency_sec": 1, "input_tokens": 1, "output_tokens": 1}
+
+        monkeypatch.setattr(index, "summarize_blog", fake_summarize)
+        monkeypatch.setattr(index.urllib.request, "urlopen", lambda req, *a, **k: _Res())
+        monkeypatch.setattr(index.time, "sleep", lambda s: None)
+        item = {"rss_title": "T", "rss_link": "https://example.com/a", "rss_time": "t", "rss_category": "c",
+                "rss_notifier_name": "TestNotifier", "rss_description": description}
+        index.push_notification([item])
+        sources = [u["ExpressionAttributeValues"][":src"] for u in updates]
+        return summarized, sources
+
+    def test_uses_article_when_long_enough(self, monkeypatch):
+        body = "x" * index.article.MIN_CHARS
+        assert self._push(monkeypatch, body, "<p>desc</p>") == ([body], ["article"])
+
+    def test_uses_description_when_article_missing(self, monkeypatch):
+        assert self._push(monkeypatch, None, "<p>desc</p>") == (["desc"], ["rss_description"])
+
+    def test_uses_description_when_article_too_short(self, monkeypatch):
+        assert self._push(monkeypatch, "short", "<p>desc</p>") == (["desc"], ["rss_description"])
+
+    def test_keeps_short_article_without_description(self, monkeypatch):
+        assert self._push(monkeypatch, "short", "") == (["short"], ["article"])
+
+    def test_skips_when_nothing_is_available(self, monkeypatch):
+        assert self._push(monkeypatch, None, "") == ([], [])

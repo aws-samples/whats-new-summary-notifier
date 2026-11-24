@@ -40,7 +40,10 @@ def str2datetime(time_str):
     return dateutil.parser.parse(time_str, ignoretz=True)
 
 
-def write_to_table(link, title, category, pubtime, notifier_name):
+MAX_DESCRIPTION_CHARS = 5000
+
+
+def write_to_table(link, title, category, pubtime, notifier_name, description=""):
     """Write a blog post to DynamoDB
 
     Args:
@@ -48,6 +51,7 @@ def write_to_table(link, title, category, pubtime, notifier_name):
         title (str): The title of the blog post
         category (str): The category of the blog post
         pubtime (str): The publication date of the blog post
+        description (str): The RSS description, used when the article page cannot be read
     """
     try:
         item = {
@@ -57,7 +61,9 @@ def write_to_table(link, title, category, pubtime, notifier_name):
             "category": category,
             "pubtime": pubtime,
         }
-        print(item)
+        if description:
+            item["rss_description"] = description[:MAX_DESCRIPTION_CHARS]
+        print({k: v for k, v in item.items() if k != "rss_description"})
         table.put_item(Item=item)
     except ClientError as e:
         # Intentional error handling for duplicates to continue
@@ -84,6 +90,7 @@ def add_blog(rss_name, entries, notifier_name):
                 rss_name,
                 str2datetime(entry["published"]).isoformat(),
                 notifier_name,
+                entry.get("summary", ""),
             )
         else:
             print("Old blog entry. skip: " + entry["title"])

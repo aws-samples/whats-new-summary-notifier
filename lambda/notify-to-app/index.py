@@ -207,11 +207,18 @@ def push_notification(item_list):
         
         item_url = item["rss_link"]
 
-        # Get the blog context
+        # Get the blog content. Fall back to the RSS description when the page
+        # cannot be fetched or has too little text.
         content = get_blog_content(item_url)
-        if content is None:
-            print(f"skip {item_url}: no content is retrieved")
-            continue
+        source = "article"
+        if content is None or len(content) < article.MIN_CHARS:
+            description = article.description_text(item.get("rss_description", ""))
+            if description:
+                print(f"use the RSS description for {item_url}")
+                content, source = description, "rss_description"
+            elif content is None:
+                print(f"skip {item_url}: no content is retrieved")
+                continue
 
         # Summarize the blog
         summarizer = SUMMARIZERS[notifier["summarizerName"]]
@@ -225,9 +232,9 @@ def push_notification(item_list):
         try:
             ddb_table.update_item(
                 Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
-                UpdateExpression="SET summary = :s, detail = :d, summary_status = :st, model_id = :m, latency_sec = :l, input_tokens = :it, output_tokens = :ot",
+                UpdateExpression="SET summary = :s, detail = :d, summary_status = :st, summary_source = :src, model_id = :m, latency_sec = :l, input_tokens = :it, output_tokens = :ot",
                 ExpressionAttributeValues={
-                    ":s": summary, ":d": detail, ":st": "completed",
+                    ":s": summary, ":d": detail, ":st": "completed", ":src": source,
                     ":m": metrics["model_id"], ":l": json.dumps(metrics["latency_sec"]),
                     ":it": metrics["input_tokens"], ":ot": metrics["output_tokens"],
                 },
@@ -269,6 +276,7 @@ def get_new_entries(blog_entries):
                 "rss_title": entry["dynamodb"]["NewImage"]["title"]["S"],
                 "rss_link": entry["dynamodb"]["NewImage"]["url"]["S"],
                 "rss_notifier_name": entry["dynamodb"]["NewImage"]["notifier_name"]["S"],
+                "rss_description": entry["dynamodb"]["NewImage"].get("rss_description", {}).get("S", ""),
             }
             print(new_data)
             res_list.append(new_data)
