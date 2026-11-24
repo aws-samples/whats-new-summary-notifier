@@ -78,7 +78,10 @@ def matches_categories(tags, categories):
     return any(tag == c or tag.startswith(c + "/") for c in categories for tag in tags)
 
 
-def write_to_table(link, title, category, pubtime, notifier_name, filter_result=None):
+MAX_DESCRIPTION_CHARS = 5000
+
+
+def write_to_table(link, title, category, pubtime, notifier_name, description="", filter_result=None):
     """Write a blog post to DynamoDB
 
     Args:
@@ -86,6 +89,7 @@ def write_to_table(link, title, category, pubtime, notifier_name, filter_result=
         title (str): The title of the blog post
         category (str): The category of the blog post
         pubtime (str): The publication date of the blog post
+        description (str): The RSS description, used when the article page cannot be read
         filter_result (str): Why the notifier filter excluded the post, or None
     """
     try:
@@ -96,9 +100,11 @@ def write_to_table(link, title, category, pubtime, notifier_name, filter_result=
             "category": category,
             "pubtime": pubtime,
         }
+        if description:
+            item["rss_description"] = description[:MAX_DESCRIPTION_CHARS]
         if filter_result:
             item["filter_result"] = filter_result
-        print(item)
+        print({k: v for k, v in item.items() if k != "rss_description"})
         table.put_item(Item=item)
     except ClientError as e:
         # Intentional error handling for duplicates to continue
@@ -130,7 +136,8 @@ def add_blog(rss_name, entries, notifier_name, categories=None):
                 rss_name,
                 str2datetime(entry["published"]).isoformat(),
                 notifier_name,
-                EXCLUDED_BY_CATEGORIES if excluded else None,
+                entry.get("summary", ""),
+                filter_result=EXCLUDED_BY_CATEGORIES if excluded else None,
             )
         else:
             print("Old blog entry. skip: " + entry["title"])

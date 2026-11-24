@@ -8,10 +8,10 @@ import time
 import traceback
 import urllib.request
 
+import article
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
-from bs4 import BeautifulSoup
 
 MODEL_IDS = json.loads(os.environ["MODEL_IDS"])
 MODEL_REGION = os.environ["MODEL_REGION"]
@@ -24,37 +24,18 @@ ddb_table = ddb.Table(os.environ["DDB_TABLE_NAME"])
 
 
 def get_blog_content(url):
-    """Retrieve the content of a blog post
+    """Retrieve the text of a blog post
 
     Args:
         url (str): The URL of the blog post
 
     Returns:
-        str: The content of the blog post, or None if it cannot be retrieved.
+        str: The text of the blog post, or None if it cannot be retrieved.
     """
-
-    try:
-        if url.lower().startswith(("http://", "https://")):
-            # Use the `with` statement to ensure the response is properly closed
-            with urllib.request.urlopen(url) as response:  # nosec B310 # nosemgrep: dynamic-urllib-use-detected
-                html = response.read()
-                if response.getcode() == 200:
-                    soup = BeautifulSoup(html, "html.parser")
-                    main = soup.find("main")
-
-                    if main:
-                        return main.text
-                    else:
-                        print(f"Error parsing {url}, there is no <main> tag in the article")
-                        return None
-
-        else:
-            print(f"Error accessing {url}, unsupported URL scheme")
-            return None
-
-    except urllib.error.URLError as e:
-        print(f"Error accessing {url}: {e.reason}")
-        return None
+    text, reason = article.get_article_text(url)
+    if text is None:
+        print(f"Cannot use {url}: {reason}")
+    return text
 
 
 def get_bedrock_client(
@@ -282,11 +263,18 @@ def push_notification(item_list):
         
         item_url = item["rss_link"]
 
-        # Get the blog context
+        # Get the blog content. Fall back to the RSS description when the page
+        # cannot be fetched or has too little text.
         content = get_blog_content(item_url)
-        if content is None:
-            print(f"skip {item_url}: no content is retrieved")
-            continue
+        source = "article"
+        if content is None or len(content) < article.MIN_CHARS:
+            description = article.description_text(item.get("rss_description", ""))
+            if description:
+                print(f"use the RSS description for {item_url}")
+                content, source = description, "rss_description"
+            elif content is None:
+                print(f"skip {item_url}: no content is retrieved")
+                continue
 
         # Optional topic filter: skip only on a clear "no"
         topics = notifier_filter(notifier, "topics")
@@ -316,9 +304,9 @@ def push_notification(item_list):
         try:
             ddb_table.update_item(
                 Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
-                UpdateExpression="SET summary = :s, detail = :d, summary_status = :st, model_id = :m, latency_sec = :l, input_tokens = :it, output_tokens = :ot",
+                UpdateExpression="SET summary = :s, detail = :d, summary_status = :st, summary_source = :src, model_id = :m, latency_sec = :l, input_tokens = :it, output_tokens = :ot",
                 ExpressionAttributeValues={
-                    ":s": summary, ":d": detail, ":st": "completed",
+                    ":s": summary, ":d": detail, ":st": "completed", ":src": source,
                     ":m": metrics["model_id"], ":l": json.dumps(metrics["latency_sec"]),
                     ":it": metrics["input_tokens"], ":ot": metrics["output_tokens"],
                 },
@@ -329,6 +317,8 @@ def push_notification(item_list):
         if destination == "teams":
             item["detail"] = item["detail"].replace("。\n", "。\r")
             msg = create_teams_message(item)
+        elif destination == "googlechat":
+            msg = create_google_chat_message(item)
         else:  # Slack
             msg = item
 
@@ -361,12 +351,29 @@ def get_new_entries(blog_entries):
                 "rss_link": entry["dynamodb"]["NewImage"]["url"]["S"],
                 "rss_notifier_name": entry["dynamodb"]["NewImage"]["notifier_name"]["S"],
                 "rss_filter_result": entry["dynamodb"]["NewImage"].get("filter_result", {}).get("S", ""),
+                "rss_description": entry["dynamodb"]["NewImage"].get("rss_description", {}).get("S", ""),
             }
             print(new_data)
             res_list.append(new_data)
         else:  # Do not notify for REMOVE or UPDATE events
             print("skip REMOVE or UPDATE event")
     return res_list
+
+
+def create_google_chat_message(item):
+    """Build a Google Chat incoming webhook message (preview)
+
+    Incoming webhooks use the Chat markup syntax by default, where
+    <URL|text> is a link and a line starting with "- " is a bullet.
+
+    Args:
+        item (dict): The article with its summary and detail
+    """
+    # "<", ">" and "|" would break the <URL|text> link syntax
+    title = item["rss_title"].translate(str.maketrans({"<": "＜", ">": "＞", "|": "｜"}))
+    link = item["rss_link"]
+    heading = f"<{link}|{title}>" if link.lower().startswith(("http://", "https://")) else f"{title}\n{link}"
+    return {"text": f"{heading}\n{item['summary']}\n\n{item['detail']}"}
 
 
 def create_teams_message(item):

@@ -13,7 +13,9 @@
 │   │   └── requirements.txt
 │   └── notify-to-app/            # DynamoDB Streams → Bedrock 要約 → DDB書き戻し → Webhook 通知
 │       ├── index.py
+│       ├── article.py            # 記事ページの取得（宛先の検査・上限）と本文の抽出
 │       ├── test_index.py         # pytest テスト
+│       ├── test_article.py       # article.py の pytest テスト
 │       └── requirements.txt
 ├── test/                         # CDK スタックの Jest テスト
 │   ├── stack.test.ts             # リソース構成テスト

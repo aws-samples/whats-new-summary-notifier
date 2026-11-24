@@ -40,6 +40,35 @@ def _items(monkeypatch, entries, categories):
     return [c.kwargs["Item"] for c in table.put_item.call_args_list]
 
 
+def _put_items(monkeypatch):
+    table = MagicMock()
+    monkeypatch.setattr(crawler, "table", table)
+    return table
+
+
+class TestWriteToTable:
+    def test_stores_description(self, monkeypatch):
+        table = _put_items(monkeypatch)
+        crawler.write_to_table("https://e/a", "T", "c", "2026-11-24T00:00:00", "N", "<p>desc</p>")
+        assert table.put_item.call_args.kwargs["Item"]["rss_description"] == "<p>desc</p>"
+
+    def test_truncates_description(self, monkeypatch):
+        table = _put_items(monkeypatch)
+        crawler.write_to_table("https://e/a", "T", "c", "t", "N", "a" * (crawler.MAX_DESCRIPTION_CHARS + 10))
+        assert len(table.put_item.call_args.kwargs["Item"]["rss_description"]) == crawler.MAX_DESCRIPTION_CHARS
+
+    def test_item_unchanged_without_description(self, monkeypatch):
+        table = _put_items(monkeypatch)
+        crawler.write_to_table("https://e/a", "T", "c", "t", "N")
+        assert table.put_item.call_args.kwargs["Item"] == {
+            "url": "https://e/a",
+            "notifier_name": "N",
+            "title": "T",
+            "category": "c",
+            "pubtime": "t",
+        }
+
+
 class TestFilterCategories:
     def test_no_filter(self):
         assert crawler.filter_categories({"destination": "slack"}) == []
@@ -107,3 +136,16 @@ class TestAddBlog:
     def test_entry_without_tags_passes(self, monkeypatch):
         items = _items(monkeypatch, [_entry()], ["general:products/amazon-s3"])
         assert "filter_result" not in items[0]
+
+    def test_passes_entry_summary(self, monkeypatch):
+        table = _put_items(monkeypatch)
+        monkeypatch.setattr(crawler, "recently_published", lambda pub: True)
+        entry = {"link": "https://e/a", "title": "T", "published": "Tue, 24 Nov 2026 00:00:00 GMT", "summary": "<p>d</p>"}
+        crawler.add_blog("What's new", [entry], "N")
+        assert table.put_item.call_args.kwargs["Item"]["rss_description"] == "<p>d</p>"
+
+    def test_excluded_entry_keeps_its_description(self, monkeypatch):
+        entry = {**_entry(WHATS_NEW_TAGS), "summary": "<p>d</p>"}
+        items = _items(monkeypatch, [entry], ["general:products/amazon-s3"])
+        assert items[0]["filter_result"] == "excluded:categories"
+        assert items[0]["rss_description"] == "<p>d</p>"

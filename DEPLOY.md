@@ -12,6 +12,9 @@ Refer to [Slack Workflow documentation](https://slack.com/help/articles/17542172
 #### For Microsoft Teams
 Refer to [Teams Incoming Webhook documentation](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook?tabs=newteams%2Cdotnet).
 
+#### For Google Chat (preview)
+Google Chat support is a preview and has not been tested against a real Google Chat space yet. Refer to [Google Chat incoming webhooks](https://developers.google.com/workspace/chat/quickstart/webhooks): register a webhook in the space (Apps & integrations > Add webhooks) and copy its URL. Your Google Workspace organization must allow incoming webhooks. Keep the URL secret; it contains a token.
+
 ### 2. Deploy
 
 Open [CloudShell](https://console.aws.amazon.com/cloudshell/home) and run:
@@ -133,7 +136,7 @@ Settings are managed in `cdk.json` under `context`.
 ### notifiers
 | Key | Description |
 |---|---|
-| `destination` | `slack` or `teams` |
+| `destination` | `slack`, `teams` or `googlechat` (Google Chat is a preview, not yet tested against a real space) |
 | `summarizerName` | Name of the summarizer to use |
 | `webhookUrlParameterName` | SSM Parameter Store name for Webhook URL |
 | `rssUrl` | RSS feed URLs (multiple supported) |
@@ -159,10 +162,15 @@ Without `filter`, every new article is summarized and posted, as before. Add `fi
 | Key | Description |
 |---|---|
 | `categories` | (Optional) RSS category tags. An article is kept when one of its tags equals a value, or starts with the value followed by `/` (`general:products` keeps every product tag). Case-insensitive. Articles without tags are kept. Checked by the crawler, with no Bedrock call |
-| `topics` | (Optional) Topics in plain text. Before summarizing, the model is asked whether the article is about one of them; only a clear "no" skips the article (`summary_status` = `filtered`). When the check fails or the answer is unclear, the article is posted |
+| `topics` | (Optional) Topics in plain text. Before summarizing, the model is asked whether the text to be summarized (the article, or its RSS description; see "How articles are read") is about one of them; only a clear "no" skips the article (`summary_status` = `filtered`). When the check fails or the answer is unclear, the article is posted |
 | `modelIds` | (Optional) Models for the `topics` check, tried in order. Defaults to `modelIds`. A smaller model keeps the extra cost low |
 
 Each `topics` check is one more Bedrock call per article that passes `categories`. Changing or removing `filter` later does not post the articles that were filtered out before. `cdk synth` fails with a message when `filter` has the wrong shape or makes the settings too large for a Lambda environment (4 KB) or an EventBridge target input (8,192 characters).
+
+### How articles are read
+The notify Lambda opens each article URL from the RSS feed and summarizes the text of its `<main>` element, or `<article>`, or `<body>` (without navigation, headers, footers and scripts), up to 50,000 characters. When the page cannot be fetched or has less than 200 characters of text, the RSS description of the entry is summarized instead; the entry is skipped only when neither is available. `summary_source` in the DynamoDB item shows which one was used.
+
+Requests send a `whats-new-summary-notifier` User-Agent and go only to public `http`/`https` addresses (checked again on every redirect, at most 5), with a 10-second timeout, a 20-second limit for the whole download and a 5 MB size limit.
 
 ## Destroy
 

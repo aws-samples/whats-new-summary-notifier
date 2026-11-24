@@ -758,7 +758,7 @@ export function App() {
                                 <label className="text-xs text-gray-500">Destination</label>
                                 <select value={n.destination} onChange={(e) => updateGui({ notifiers: { ...guiConfig.notifiers, [key]: { ...n, destination: e.target.value } } })}
                                   className="w-full border border-gray-300 rounded px-2 py-1 text-xs bg-white">
-                                  <option value="slack">Slack</option><option value="teams">Teams</option>
+                                  <option value="slack">Slack</option><option value="teams">Teams</option><option value="googlechat">Google Chat (preview)</option>
                                 </select>
                               </div>
                               <div>

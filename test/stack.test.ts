@@ -182,6 +182,22 @@ describe('WhatsNewSummaryNotifierStack', () => {
     template.resourceCountIs('AWS::Events::Rule', 2);
   });
 
+  test('googlechat notifier gets read access to its webhook URL parameter', () => {
+    const template = createStack({
+      notifiers: {
+        GoogleChat: {
+          destination: 'googlechat',
+          summarizerName: 'AwsSolutionsArchitectJapanese',
+          webhookUrlParameterName: '/WhatsNew/URL/googlechat',
+          rssUrl: { feed: 'https://example.com/feed' },
+        },
+      },
+    });
+    template.resourceCountIs('AWS::Events::Rule', 1);
+    const policies = JSON.stringify(template.findResources('AWS::IAM::Policy'));
+    expect(policies).toContain('parameter/WhatsNew/URL/googlechat');
+  });
+
   describe('notifier filter', () => {
     const notifierWith = (filter: unknown) => ({
       notifiers: {

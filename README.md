@@ -2,7 +2,7 @@
 
 **[日本語はこちら](README_ja.md)**
 
-**Whats New Summary Notifier** is a sample implementation of a generative AI application that summarizes the content of AWS What's New and other web articles in multiple languages when there is an update, and delivers the summary to Slack or Microsoft Teams.
+**Whats New Summary Notifier** is a sample implementation of a generative AI application that summarizes the content of AWS What's New and other web articles in multiple languages when there is an update, and delivers the summary to Slack, Microsoft Teams or Google Chat (preview).
 
 <p align="center">
   <img alt="example" src="doc/example_en.png" width="50%" />
@@ -16,7 +16,7 @@ This stack create following architecture.
 
 ## Prerequisites
 - AWS Account with [CloudShell](https://console.aws.amazon.com/cloudshell/home) access
-- Webhook URL for Slack or Microsoft Teams
+- Webhook URL for Slack, Microsoft Teams or Google Chat (preview)
 - (For manual deploy only) Node.js 22+, Docker, [AWS CDK CLI](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html)
 
 ## Deployment Steps
@@ -35,6 +35,9 @@ Refer to [this documentation](https://slack.com/help/articles/17542172840595-Bui
 #### For Microsoft Teams
 Refer to [this documentation](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook?tabs=newteams%2Cdotnet) to create the Webhook URL.
 
+#### For Google Chat (preview)
+Google Chat support is a preview: it has not been tested against a real Google Chat space yet. Refer to [Google Chat incoming webhooks](https://developers.google.com/workspace/chat/quickstart/webhooks) and register a webhook in the space (Apps & integrations > Add webhooks), then copy its URL. Your Google Workspace organization must allow incoming webhooks. The URL contains a secret token, so do not share it; it is stored in SSM Parameter Store as a SecureString like the other webhook URLs.
+
 ### Deploy
 
 Open [CloudShell](https://console.aws.amazon.com/cloudshell/home) and run:
@@ -45,7 +48,7 @@ cd whats-new-summary-notifier
 bash deploy.sh
 ```
 
-The interactive wizard will guide you through selecting the notification destination (Slack/Teams), summary language, and entering your Webhook URL. Deployment runs via AWS CodeBuild automatically.
+The interactive wizard will guide you through selecting the notification destination (Slack/Teams/Google Chat (preview)), summary language, and entering your Webhook URL. Deployment runs via AWS CodeBuild automatically.
 
 For advanced configuration options including multi-tenant deployment, please refer to the [Deployment Guide](DEPLOY.md).
 
@@ -72,4 +75,4 @@ By default, some resources such as the Amazon DynamoDB table are set to not be d
 If you need to completely delete everything, you will need to access the remaining resources and manually delete them.
 
 ## Third Party Services
-This code interacts with Slack or Microsoft Teams which has terms published at [Terms Page (Slack)](https://slack.com/main-services-agreement) / [Terms Page (Microsoft 365)](https://www.microsoft.com/en/servicesagreement), and pricing described at [Pricing Page (Slack)](https://slack.com/pricing) / [Pricing Page (Microsoft 365)](https://www.microsoft.com/en-us/microsoft-365/business/compare-all-microsoft-365-business-products?&activetab=tab:primaryr2). You should be familiar with the pricing and confirm that your use case complies with the terms before proceeding.
+This code interacts with Slack, Microsoft Teams or Google Chat which has terms published at [Terms Page (Slack)](https://slack.com/main-services-agreement) / [Terms Page (Microsoft 365)](https://www.microsoft.com/en/servicesagreement) / [Terms Page (Google Workspace)](https://workspace.google.com/terms/premier_terms/), and pricing described at [Pricing Page (Slack)](https://slack.com/pricing) / [Pricing Page (Microsoft 365)](https://www.microsoft.com/en-us/microsoft-365/business/compare-all-microsoft-365-business-products?&activetab=tab:primaryr2) / [Pricing Page (Google Workspace)](https://workspace.google.com/pricing). You should be familiar with the pricing and confirm that your use case complies with the terms before proceeding.

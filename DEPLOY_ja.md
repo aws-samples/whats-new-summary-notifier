@@ -12,6 +12,9 @@
 #### Microsoft Teams の場合
 [Teams Incoming Webhook ドキュメント](https://learn.microsoft.com/ja-jp/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook?tabs=newteams%2Cdotnet)を参考に Webhook URL を取得してください。
 
+#### Google Chat の場合（preview）
+Google Chat への通知は preview の機能で、実際の Google Chat スペースでの動作はまだ確認していません。[Google Chat の受信 Webhook のドキュメント](https://developers.google.com/workspace/chat/quickstart/webhooks)を参考に、スペースで Webhook を登録し（アプリと統合 > Webhook を追加）、URL をコピーしてください。Google Workspace の組織で受信 Webhook が許可されている必要があります。URL にはトークンが含まれるので共有しないでください。
+
 ### 2. デプロイ
 
 [CloudShell](https://console.aws.amazon.com/cloudshell/home) を開き、以下を実行します:
@@ -133,7 +136,7 @@ cdk deploy
 ### notifiers
 | キー | 説明 |
 |---|---|
-| `destination` | `slack` または `teams` |
+| `destination` | `slack`、`teams`、`googlechat` のいずれか（Google Chat は preview で、実際のスペースでは未確認） |
 | `summarizerName` | 使用する summarizer の名前 |
 | `webhookUrlParameterName` | Webhook URL を格納する SSM Parameter Store 名 |
 | `rssUrl` | RSS フィード URL（複数指定可） |
@@ -159,10 +162,15 @@ cdk deploy
 | キー | 説明 |
 |---|---|
 | `categories` | （オプション）RSS のカテゴリタグ。記事のタグのどれかが値と同じか、値に `/` を続けた文字列で始まるときに残します（`general:products` なら製品のタグすべて）。大文字と小文字は区別しません。タグの無い記事は残します。クローラーが判定し、Bedrock は呼びません |
-| `topics` | （オプション）話題を文で書いた一覧。要約の前に、記事がどれかの話題に関係するかをモデルに判定させ、はっきり「関係しない」と答えた記事だけを飛ばします（`summary_status` は `filtered`）。判定に失敗したときや答えがはっきりしないときは通知します |
+| `topics` | （オプション）話題を文で書いた一覧。要約の前に、要約する文（記事の本文、または RSS の説明文。「記事本文の取得」を参照）がどれかの話題に関係するかをモデルに判定させ、はっきり「関係しない」と答えた記事だけを飛ばします（`summary_status` は `filtered`）。判定に失敗したときや答えがはっきりしないときは通知します |
 | `modelIds` | （オプション）`topics` の判定に使うモデル（順に試します）。省略すると `modelIds` を使います。小さいモデルにすると追加の費用を抑えられます |
 
 `topics` の判定は、`categories` を通った記事 1 件につき Bedrock の呼び出しが 1 回増えます。あとで `filter` を変えたり外したりしても、それまでに外した記事がまとめて通知されることはありません。`filter` の形が誤っているときや、設定が Lambda の環境変数（4 KB）や EventBridge のターゲット入力（8,192 文字）に収まらないときは、`cdk synth` がメッセージを出して止まります。
+
+### 記事本文の取得
+通知 Lambda は RSS の各記事の URL を開き、`<main>`、なければ `<article>`、なければ `<body>` の文字（ナビゲーション、ヘッダー、フッター、スクリプトは除く）を 50,000 字まで要約します。ページを取得できないときや本文が 200 字に満たないときは、RSS の説明文（description）を要約します。どちらも無いときだけ記事を飛ばします。DynamoDB の項目の `summary_source` に、どちらを使ったかが入ります。
+
+リクエストは `whats-new-summary-notifier` の User-Agent を付け、公開の `http`/`https` のアドレスにだけ送ります（リダイレクトのたびに確認し、5 回まで）。タイムアウトは 10 秒、ダウンロード全体の上限は 20 秒、大きさの上限は 5 MB です。
 
 ## スタックの削除
 
