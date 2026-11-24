@@ -147,6 +147,11 @@ Settings are managed in `cdk.json` under `context`.
 "schedule": { "minute": "0/15", "hour": "*", "day": "*", "month": "*", "year": "*" }
 ```
 
+### How articles are read
+The notify Lambda opens each article URL from the RSS feed and summarizes the text of its `<main>` element, or `<article>`, or `<body>` (without navigation, headers, footers and scripts), up to 50,000 characters. When the page cannot be fetched or has less than 200 characters of text, the RSS description of the entry is summarized instead; the entry is skipped only when neither is available. `summary_source` in the DynamoDB item shows which one was used.
+
+Requests send a `whats-new-summary-notifier` User-Agent and go only to public `http`/`https` addresses (checked again on every redirect, at most 5), with a 10-second timeout, a 20-second limit for the whole download and a 5 MB size limit.
+
 ## Destroy
 
 ```bash

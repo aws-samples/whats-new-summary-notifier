@@ -5,7 +5,7 @@ Whats New Summary Notifier は、AWS What's New などの Web 記事の RSS フ�
 ## 主要機能
 - RSS フィードの定期クロール（EventBridge スケジュール）
 - 新着記事の DynamoDB への記録（重複排除付き）
-- DynamoDB Streams トリガーによる記事本文の取得・要約・通知
+- DynamoDB Streams トリガーによる記事本文の取得・要約・通知（`<main>` → `<article>` → `<body>` の順に本文を探し、取れないときは RSS の説明文で要約。取得先は公開の http(s) のアドレスだけで、タイムアウトとサイズの上限付き）
 - 要約結果の DynamoDB への書き戻し（summary, detail, summary_status）
 - Slack / Microsoft Teams / Google Chat（preview、実機未確認）対応（Webhook 経由）
 - 要約言語・ペルソナのカスタマイズ（cdk.json の summarizers で設定）
