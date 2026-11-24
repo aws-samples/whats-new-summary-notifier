@@ -19,30 +19,3 @@ scanners:
     enabled: false
   trivy:
     enabled: false
-
-global_settings:
-  # minimatch GHSA-g3hv-75wg-m249 (Dependabot alert #117). The vulnerable copies
-  # are bundled in aws-cdk-lib (no fixed release yet) and pulled in by
-  # typescript-eslint (fixed in 8.73.0, PR #32). Remove these entries when the
-  # alert is resolved; they stop matching on the expiry date either way.
-  suppressions:
-    - path: node_modules/**/minimatch/package.json
-      rule_id: GHSA-g3hv-75wg-m249
-      reason: Tracked by Dependabot alert 117, waiting for an aws-cdk-lib release
-      expires: "2026-12-31"
-    - path: node_modules/aws-cdk-lib/package.json
-      rule_id: npm-audit-transitive-aws-cdk-lib
-      reason: Bundled minimatch, tracked by Dependabot alert 117
-      expires: "2026-12-31"
-    - path: node_modules/@aws-cdk/aws-lambda-python-alpha/package.json
-      rule_id: npm-audit-transitive-@aws-cdk/aws-lambda-python-alpha
-      reason: Inherits the aws-cdk-lib minimatch finding, tracked by Dependabot alert 117
-      expires: "2026-12-31"
-    - path: node_modules/typescript-eslint/package.json
-      rule_id: npm-audit-transitive-typescript-eslint
-      reason: minimatch via typescript-eslint, fixed by PR 32
-      expires: "2026-12-31"
-    - path: node_modules/@typescript-eslint/*/package.json
-      rule_id: npm-audit-transitive-@typescript-eslint/*
-      reason: minimatch via typescript-eslint, fixed by PR 32
-      expires: "2026-12-31"
