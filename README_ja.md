@@ -29,7 +29,7 @@
 * `detail`: 記事の箇条書き説明
 
 #### Microsoft Teams の場合
-[こちらのドキュメント](https://learn.microsoft.com/ja-jp/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook?tabs=newteams%2Cdotnet)を参考にして Webhook URL を取得してください。
+Microsoft は 2026 年 5 月に Teams の Office 365 コネクタ（コネクタで作る Incoming Webhook を含む）を廃止しました。Workflows アプリで Webhook を作ってください。チャネルの **その他のオプション（...）** から **ワークフロー** を開き、テンプレート **Send webhook alerts to a channel** を選んでチームとチャネルを指定し、**保存** して Webhook URL をコピーします。ほかの Webhook のテンプレート（「from specific people」「from people in an org」）はサインインのトークンが要り、このアプリはトークンを送らないので使えません。[Create an Incoming Webhook](https://learn.microsoft.com/ja-jp/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook) と、古いコネクタの URL を置き換える手順も載せた[デプロイガイド](DEPLOY_ja.md#microsoft-teams-の場合)を参照してください。
 
 #### Google Chat の場合（preview）
 Google Chat への通知は preview の機能で、実際の Google Chat スペースでの動作はまだ確認していません。[Google Chat の受信 Webhook のドキュメント](https://developers.google.com/workspace/chat/quickstart/webhooks)を参考に、通知先のスペースで Webhook を登録し（アプリと統合 > Webhook を追加）、URL をコピーしてください。Google Workspace の組織で受信 Webhook の利用が許可されている必要があります。URL には秘密のトークンが含まれるので共有しないでください。他の Webhook URL と同じく SSM Parameter Store に SecureString として保存されます。

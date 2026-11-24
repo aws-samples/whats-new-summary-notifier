@@ -33,7 +33,7 @@ Refer to [this documentation](https://slack.com/help/articles/17542172840595-Bui
 * `detail`: A bulleted description of the article
 
 #### For Microsoft Teams
-Refer to [this documentation](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook?tabs=newteams%2Cdotnet) to create the Webhook URL.
+Microsoft retired Office 365 connectors in Teams, including the connector-based Incoming Webhook, in May 2026. Create the webhook with the Workflows app: in the channel, select **More options (...)** > **Workflows**, pick the **Send webhook alerts to a channel** template, choose the team and channel, select **Save**, and copy the webhook URL. The other webhook templates ("from specific people", "from people in an org") need a sign-in token, which this application does not send. See [Create an Incoming Webhook](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook) and the [Deployment Guide](DEPLOY.md#for-microsoft-teams), which also covers replacing an old connector URL.
 
 #### For Google Chat (preview)
 Google Chat support is a preview: it has not been tested against a real Google Chat space yet. Refer to [Google Chat incoming webhooks](https://developers.google.com/workspace/chat/quickstart/webhooks) and register a webhook in the space (Apps & integrations > Add webhooks), then copy its URL. Your Google Workspace organization must allow incoming webhooks. The URL contains a secret token, so do not share it; it is stored in SSM Parameter Store as a SecureString like the other webhook URLs.

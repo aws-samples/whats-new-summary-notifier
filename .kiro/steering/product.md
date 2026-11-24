@@ -7,7 +7,7 @@ Whats New Summary Notifier は、AWS What's New などの Web 記事の RSS フ�
 - 新着記事の DynamoDB への記録（重複排除付き）
 - DynamoDB Streams トリガーによる記事本文の取得・要約・通知（`<main>` → `<article>` → `<body>` の順に本文を探し、取れないときは RSS の説明文で要約。取得先は公開の http(s) のアドレスだけで、タイムアウトとサイズの上限付き）
 - 要約結果の DynamoDB への書き戻し（summary, detail, summary_status）
-- Slack / Microsoft Teams / Google Chat（preview、実機未確認）対応（Webhook 経由）
+- Slack / Microsoft Teams / Google Chat（preview、実機未確認）対応（Webhook 経由。Teams は Workflows アプリの Webhook に Adaptive Card を送る。Office 365 コネクタの Incoming Webhook は 2026 年 5 月に廃止）
 - 任意の記事の絞り込み（notifier の `filter`。`categories` はクローラーがタグで判定、`topics` は要約前に Bedrock で判定。書かなければ全記事を通知）
 - 要約言語・ペルソナのカスタマイズ（cdk.json の summarizers で設定）
 - モデルフォールバック: 複数モデル ID を順に試行し、失敗時は次のモデルへ自動切替

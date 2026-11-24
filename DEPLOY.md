@@ -10,7 +10,15 @@ Deploy using [AWS CloudShell](https://console.aws.amazon.com/cloudshell/home) â€
 Refer to [Slack Workflow documentation](https://slack.com/help/articles/17542172840595-Build-a-workflow--Create-a-workflow-in-Slack). Create a workflow with 5 text variables: `rss_time`, `rss_link`, `rss_title`, `summary`, `detail`.
 
 #### For Microsoft Teams
-Refer to [Teams Incoming Webhook documentation](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook?tabs=newteams%2Cdotnet).
+Microsoft retired Office 365 connectors in Teams, including the connector-based Incoming Webhook, in May 2026. Create the webhook with the Workflows app instead ([Create an Incoming Webhook](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook), [Send messages in Teams using incoming webhooks](https://support.microsoft.com/en-us/office/send-messages-in-teams-using-incoming-webhooks-323660ec-12ca-40b1-a1d3-a3df47e808c4)):
+
+1. In Teams, go to the channel, select **More options (...)** next to it, and select **Workflows**.
+2. Select the **Send webhook alerts to a channel** template. The notifier sends no sign-in token, so the templates "from specific people" and "from people in an org" do not work with it.
+3. Choose the team and channel, select **Save**, and copy the webhook URL shown on the workflow's details page.
+
+Posts appear under the Workflows bot. Anyone who has the URL can post to the channel, so keep it secret. The workflow belongs to the person who created it; add a co-owner so that it keeps working if that person leaves.
+
+If you deployed with a connector URL before, it no longer works. Create a workflow as above and put its URL in the same SSM parameter (`/WhatsNew/URL`, or `/WhatsNew/URL/<tenant>`), for example by editing the parameter in Systems Manager Parameter Store or by running `bash deploy.sh` again. The notify Lambda reads the parameter for every article, so it uses the new URL without a redeploy.
 
 #### For Google Chat (preview)
 Google Chat support is a preview and has not been tested against a real Google Chat space yet. Refer to [Google Chat incoming webhooks](https://developers.google.com/workspace/chat/quickstart/webhooks): register a webhook in the space (Apps & integrations > Add webhooks) and copy its URL. Your Google Workspace organization must allow incoming webhooks. Keep the URL secret; it contains a token.
