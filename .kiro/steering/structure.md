@@ -9,10 +9,13 @@
 ├── lambda/                       # Lambda 関数（Python）
 │   ├── rss-crawler/              # RSS フィードのクロール → DynamoDB 書き込み
 │   │   ├── index.py
+│   │   ├── test_crawler.py       # pytest テスト
 │   │   └── requirements.txt
 │   └── notify-to-app/            # DynamoDB Streams → Bedrock 要約 → DDB書き戻し → Webhook 通知
 │       ├── index.py
+│       ├── article.py            # 記事ページの取得（宛先の検査・上限）と本文の抽出
 │       ├── test_index.py         # pytest テスト
+│       ├── test_article.py       # article.py の pytest テスト
 │       └── requirements.txt
 ├── test/                         # CDK スタックの Jest テスト
 │   ├── stack.test.ts             # リソース構成テスト
@@ -40,7 +43,7 @@
 ## 規約
 - CDK スタック: `lib/` に配置、1 スタック構成
 - Lambda 関数: `lambda/{機能名}/` に配置、各ディレクトリに `index.py` + `requirements.txt`
-- Lambda テスト: 同ディレクトリに `test_index.py` を配置、pytest で実行
+- Lambda テスト: 同ディレクトリに `test_*.py` を配置、pytest で実行（ファイル名はディレクトリをまたいで重ならないようにする）
 - CDK テスト: `test/` に配置、Jest + ts-jest で実行
 - Lambda は `PythonFunction` コンストラクト（`@aws-cdk/aws-lambda-python-alpha`）でビルド
 - 設定値は `cdk.json` の `context` で一元管理（ハードコードしない）
