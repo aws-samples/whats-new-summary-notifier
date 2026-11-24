@@ -105,7 +105,13 @@ def write_to_table(link, title, category, pubtime, notifier_name, description=""
         if filter_result:
             item["filter_result"] = filter_result
         print({k: v for k, v in item.items() if k != "rss_description"})
-        table.put_item(Item=item)
+        # Write only new posts: overwriting an existing item would drop its summary and
+        # summary_status, and would send a MODIFY record to the notify Lambda
+        table.put_item(
+            Item=item,
+            ConditionExpression="attribute_not_exists(#url)",
+            ExpressionAttributeNames={"#url": "url"},
+        )
     except ClientError as e:
         # Intentional error handling for duplicates to continue
         if e.response["Error"]["Code"] == "ConditionalCheckFailedException":

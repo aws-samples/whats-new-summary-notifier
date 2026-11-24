@@ -176,9 +176,16 @@ Without `filter`, every new article is summarized and posted, as before. Add `fi
 Each `topics` check is one more Bedrock call per article that passes `categories`. Changing or removing `filter` later does not post the articles that were filtered out before. `cdk synth` fails with a message when `filter` has the wrong shape or makes the settings too large for a Lambda environment (4 KB) or an EventBridge target input (8,192 characters).
 
 ### How articles are read
-The notify Lambda opens each article URL from the RSS feed and summarizes the text of its `<main>` element, or `<article>`, or `<body>` (without navigation, headers, footers and scripts), up to 50,000 characters. When the page cannot be fetched or has less than 200 characters of text, the RSS description of the entry is summarized instead; the entry is skipped only when neither is available. `summary_source` in the DynamoDB item shows which one was used.
+The notify Lambda opens each article URL from the RSS feed and summarizes the text of its `<main>` element, or `<article>`, or `<body>` (without navigation, headers, footers and scripts), up to 50,000 characters. When the page cannot be fetched or has less than 200 characters of text, the RSS description of the entry is summarized instead; when neither is available, the article is not posted and its item gets `summary_status` = `failed`. `summary_source` in the DynamoDB item shows which one was used.
 
 Requests send a `whats-new-summary-notifier` User-Agent and go only to public `http`/`https` addresses (checked again on every redirect, at most 5), with a 10-second timeout, a 20-second limit for the whole download and a 5 MB size limit.
+
+### When an article is not notified
+Some failures before the post may not happen again on a later attempt: Bedrock throttling or a 5xx error, a webhook that answers 429 or 5xx, a connection that cannot be made, or a timeout. For these, the notify Lambda fails, and Lambda retries the article up to 2 times. An article that has waited in the stream for more than 6 hours is not retried.
+
+Any other failure (no text to summarize, a webhook 4xx, no access to the model) is written to the DynamoDB item as `summary_status` = `failed` with a `failure_reason`, and the article is not retried. When the webhook request was sent but no answer came back within 10 seconds, the article is also marked `failed`, because it may already have been posted. A retry never posts an article twice.
+
+When the retries do not help, Lambda sends a message about the failed stream record (not the article itself) to the SQS queue whose name contains `NotifyFailureQueue`, which keeps messages for 14 days. The stack creates two CloudWatch alarms without actions: one when that queue has a message, and one when the notify Lambda is more than 30 minutes behind the stream (`IteratorAge`). To be told, add an action such as an SNS topic to the alarms in CloudWatch. To find articles that were not posted, look for items whose `summary_status` is `failed`, or is not set on an item without a `filter_result`.
 
 ## Destroy
 

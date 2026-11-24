@@ -6,12 +6,15 @@ import os
 import re
 import time
 import traceback
+import urllib.error
 import urllib.request
 
 import article
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from botocore.exceptions import ConnectionError as BotoConnectionError
+from botocore.exceptions import HTTPClientError as BotoHTTPClientError
 
 MODEL_IDS = json.loads(os.environ["MODEL_IDS"])
 MODEL_REGION = os.environ["MODEL_REGION"]
@@ -21,6 +24,88 @@ SUMMARIZERS = json.loads(os.environ["SUMMARIZERS"])
 ssm = boto3.client("ssm")
 ddb = boto3.resource("dynamodb")
 ddb_table = ddb.Table(os.environ["DDB_TABLE_NAME"])
+
+WEBHOOK_TIMEOUT_SEC = 10  # per connect and per read
+# Do not start a post with less time left than this: a Lambda timeout after the post
+# would make the event source retry the record and post the article twice.
+MIN_POST_TIME_MS = 30_000
+# AWS error codes that a later attempt may not hit
+RETRYABLE_ERROR_CODES = {
+    "ThrottlingException",
+    "TooManyRequestsException",
+    "ServiceUnavailableException",
+    "InternalServerException",
+    "ModelNotReadyException",
+    "ModelTimeoutException",
+}
+MAX_REASON_CHARS = 500
+
+
+class RetryableError(Exception):
+    """A failure before the post that a later attempt may not hit."""
+
+
+class MaybePostedError(Exception):
+    """The webhook request was sent but no status came back, so the message may have been posted."""
+
+
+def is_retryable(error):
+    """True for failures before the post that the event source should retry: throttling, 5xx and timeouts.
+
+    Everything else (no text to summarize, webhook 4xx, access denied, a bug) fails the same way
+    on every attempt, and a failure after the request was sent must not post the article twice.
+    """
+    if isinstance(error, RetryableError):
+        return True
+    if isinstance(error, MaybePostedError):
+        return False
+    if isinstance(error, ClientError):
+        code = error.response.get("Error", {}).get("Code", "")
+        status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0)
+        return code in RETRYABLE_ERROR_CODES or status >= 500
+    if isinstance(error, urllib.error.HTTPError):  # the webhook answered, so nothing was posted
+        return error.code == 429 or error.code >= 500
+    if isinstance(error, urllib.error.URLError):  # the webhook request was not sent
+        return True
+    return isinstance(error, (BotoConnectionError, BotoHTTPClientError, TimeoutError))
+
+
+def post_to_webhook(url, data):
+    """POST data to the webhook
+
+    Raises:
+        urllib.error.HTTPError: the webhook answered with an error status, so nothing was posted
+        urllib.error.URLError: the request was not sent (name resolution, connection refused or timed out)
+        MaybePostedError: the request was sent but no status came back
+    """
+    req = urllib.request.Request(url, data, {"Content-Type": "application/json"})
+    try:
+        # urllib wraps errors while sending the request in URLError; errors while waiting
+        # for the status line come through unwrapped
+        res = urllib.request.urlopen(req, timeout=WEBHOOK_TIMEOUT_SEC)  # nosec B310 # nosemgrep: dynamic-urllib-use-detected
+    except urllib.error.URLError:
+        raise
+    except Exception as error:  # every other failure happened after the request was sent
+        raise MaybePostedError(f"no answer from the webhook ({error!r}); the message may have been posted") from error
+    with res:
+        try:
+            print(res.read())
+        except Exception as error:  # noqa: BLE001 - the status was already received, so it was posted
+            print(f"Posted, but the response body could not be read: {error!r}")
+
+
+def mark_failed(item, reason):
+    """Record that the article was not notified and why, so a person can find it"""
+    reason = reason[:MAX_REASON_CHARS]
+    print(f"ERROR: {item['rss_link']} is not notified: {reason}")
+    try:
+        ddb_table.update_item(
+            Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
+            UpdateExpression="SET summary_status = :st, failure_reason = :r",
+            ExpressionAttributeValues={":st": "failed", ":r": reason},
+        )
+    except Exception as e:  # noqa: BLE001 - the status is informational
+        print(f"Failed to write the failed status to DDB: {e}")
 
 
 def get_blog_content(url):
@@ -243,11 +328,15 @@ def judge_relevance(blog_body, topics, model_ids):
     return None
 
 
-def push_notification(item_list):
+def push_notification(item_list, context=None):
     """Notify the arrival of articles
+
+    Failures before the post are raised to the caller. After the webhook request is sent,
+    nothing raises, so the event source never retries a record that may have been posted.
 
     Args:
         item_list (list): List of articles to be notified
+        context: The Lambda context, used to check the time left before the post
     """
 
     for item in item_list:
@@ -273,7 +362,7 @@ def push_notification(item_list):
                 print(f"use the RSS description for {item_url}")
                 content, source = description, "rss_description"
             elif content is None:
-                print(f"skip {item_url}: no content is retrieved")
+                mark_failed(item, "no article text and no RSS description")
                 continue
 
         # Optional topic filter: skip only on a clear "no"
@@ -300,7 +389,21 @@ def push_notification(item_list):
         item["summary"] = summary
         item["detail"] = detail
 
-        # Write summary back to DynamoDB
+        if destination == "teams":
+            item["detail"] = item["detail"].replace("。\n", "。\r")
+            msg = create_teams_message(item)
+        elif destination == "googlechat":
+            msg = create_google_chat_message(item)
+        else:  # Slack
+            msg = item
+
+        encoded_msg = json.dumps(msg).encode("utf-8")
+        if context is not None and context.get_remaining_time_in_millis() < MIN_POST_TIME_MS:
+            raise RetryableError("not enough time left in this invocation to post")
+        print(f"push_msg:{item}")
+        post_to_webhook(app_webhook_url, encoded_msg)
+
+        # Posted. Nothing below may raise: a retry would post the article again.
         try:
             ddb_table.update_item(
                 Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
@@ -311,25 +414,8 @@ def push_notification(item_list):
                     ":it": metrics["input_tokens"], ":ot": metrics["output_tokens"],
                 },
             )
-        except Exception as e:  # noqa: BLE001 - a failed summary write must not block the notification
+        except Exception as e:  # noqa: BLE001 - the article was posted; the summary is informational
             print(f"Failed to write summary to DDB: {e}")
-
-        if destination == "teams":
-            item["detail"] = item["detail"].replace("。\n", "。\r")
-            msg = create_teams_message(item)
-        elif destination == "googlechat":
-            msg = create_google_chat_message(item)
-        else:  # Slack
-            msg = item
-
-        encoded_msg = json.dumps(msg).encode("utf-8")
-        print(f"push_msg:{item}")
-        headers = {
-            "Content-Type": "application/json",
-        }
-        req = urllib.request.Request(app_webhook_url, encoded_msg, headers)
-        with urllib.request.urlopen(req) as res:  # nosec B310 # nosemgrep: dynamic-urllib-use-detected
-            print(res.read())
         time.sleep(0.5)
 
 
@@ -495,13 +581,21 @@ def create_teams_message(item):
 def handler(event, context):
     """Notify about blog entries registered in DynamoDB
 
+    A failure a retry may fix is raised, so the event source retries the record (2 times, then
+    the record goes to the failure queue). Any other failure is written to the item as
+    summary_status=failed with a failure_reason, and the record is finished. The event source
+    sends one record per invocation (batchSize 1), so a retry never posts another article again.
+
     Args:
         event (dict): Information about the updated items notified from DynamoDB
     """
 
-    try:
-        new_data = get_new_entries(event["Records"])
-        if 0 < len(new_data):
-            push_notification(new_data)
-    except Exception:  # noqa: BLE001 - top-level handler logs every failure
-        print(traceback.print_exc())
+    for item in get_new_entries(event["Records"]):
+        try:
+            push_notification([item], context)
+        except Exception as error:  # classify every failure
+            if is_retryable(error):
+                print(f"Retry later: {item['rss_link']}: {error!r}")
+                raise
+            traceback.print_exc()
+            mark_failed(item, f"{type(error).__name__}: {error}")
