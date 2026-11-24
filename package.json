@@ -9,7 +9,7 @@
     "watch": "tsc -w",
     "test": "npm run test:ts && npm run test:py",
     "test:ts": "jest",
-    "test:py": "uv run --python 3.14 --with pytest==9.2.0 --with beautifulsoup4 --with boto3 pytest lambda/ -v",
+    "test:py": "uv run --python 3.15 --with pytest==9.2.0 --with beautifulsoup4 --with boto3 pytest lambda/ -v",
     "lint": "npm run lint:ts && npm run lint:py",
     "lint:ts": "eslint lib/ bin/ test/",
     "lint:py": "uv run --with ruff==0.17.6 ruff check lambda/ --per-file-ignores='**/test_*.py:E402'",
@@ -33,7 +33,7 @@
     "typescript-eslint": "^8.73.0"
   },
   "dependencies": {
-    "@aws-cdk/aws-lambda-python-alpha": "^2.277.0-alpha.0",
+    "@aws-cdk/aws-lambda-python-alpha": "^2.278.0-alpha.0",
     "aws-cdk-lib": "^2.278.0",
     "cdk-nag": "^2.37.55",
     "constructs": "^10.6.0",

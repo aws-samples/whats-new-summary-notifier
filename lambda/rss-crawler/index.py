@@ -40,10 +40,48 @@ def str2datetime(time_str):
     return dateutil.parser.parse(time_str, ignoretz=True)
 
 
+EXCLUDED_BY_CATEGORIES = "excluded:categories"
+
+
+def filter_categories(notifier):
+    """Return the lower-cased filter.categories of a notifier, or [] when it is not set or invalid"""
+    notifier_filter = notifier.get("filter")
+    if notifier_filter is None:
+        return []
+    categories = notifier_filter.get("categories", []) if isinstance(notifier_filter, dict) else None
+    if not isinstance(categories, list) or not all(isinstance(c, str) for c in categories):
+        print("Ignore filter.categories: it must be a list of strings")
+        return []
+    return [c.strip().lower() for c in categories if c.strip()]
+
+
+def entry_tags(entry):
+    """Return the lower-cased category tags of an RSS entry
+
+    What's New puts several tags in one <category> element, separated by commas.
+    """
+    tags = []
+    for tag in entry.get("tags") or []:
+        term = tag.get("term") if isinstance(tag, dict) else None
+        if term:
+            tags.extend(t.strip().lower() for t in term.split(",") if t.strip())
+    return tags
+
+
+def matches_categories(tags, categories):
+    """True when there is no category filter, the entry has no tags, or a tag matches a category
+
+    A tag matches a category when it is equal to it or starts with the category followed by "/".
+    """
+    if not categories or not tags:
+        return True
+    return any(tag == c or tag.startswith(c + "/") for c in categories for tag in tags)
+
+
 MAX_DESCRIPTION_CHARS = 5000
 
 
-def write_to_table(link, title, category, pubtime, notifier_name, description=""):
+def write_to_table(link, title, category, pubtime, notifier_name, description="", filter_result=None):
     """Write a blog post to DynamoDB
 
     Args:
@@ -52,6 +90,7 @@ def write_to_table(link, title, category, pubtime, notifier_name, description=""
         category (str): The category of the blog post
         pubtime (str): The publication date of the blog post
         description (str): The RSS description, used when the article page cannot be read
+        filter_result (str): Why the notifier filter excluded the post, or None
     """
     try:
         item = {
@@ -63,6 +102,8 @@ def write_to_table(link, title, category, pubtime, notifier_name, description=""
         }
         if description:
             item["rss_description"] = description[:MAX_DESCRIPTION_CHARS]
+        if filter_result:
+            item["filter_result"] = filter_result
         print({k: v for k, v in item.items() if k != "rss_description"})
         table.put_item(Item=item)
     except ClientError as e:
@@ -74,16 +115,21 @@ def write_to_table(link, title, category, pubtime, notifier_name, description=""
             print(e)
 
 
-def add_blog(rss_name, entries, notifier_name):
+def add_blog(rss_name, entries, notifier_name, categories=None):
     """Add blog posts
+
+    Posts that do not match the category filter are still written, with filter_result
+    set, so that loosening or removing the filter later does not post them all at once.
 
     Args:
         rss_name (str): The category of the blog (RSS unit)
         entries (List): The list of blog posts
+        categories (List): The notifier's filter.categories, lower-cased
     """
 
     for entry in entries:
         if recently_published(entry["published"]):
+            excluded = not matches_categories(entry_tags(entry), categories or [])
             write_to_table(
                 entry["link"],
                 entry["title"],
@@ -91,6 +137,7 @@ def add_blog(rss_name, entries, notifier_name):
                 str2datetime(entry["published"]).isoformat(),
                 notifier_name,
                 entry.get("summary", ""),
+                filter_result=EXCLUDED_BY_CATEGORIES if excluded else None,
             )
         else:
             print("Old blog entry. skip: " + entry["title"])
@@ -110,4 +157,4 @@ def handler(event, context):
             # If you want to retrieve from the past, change this number of days and re-import.
             print("Skip RSS " + rss_name)
             continue
-        add_blog(rss_name, rss_result["entries"], notifier_name)
+        add_blog(rss_name, rss_result["entries"], notifier_name, filter_categories(notifier))

@@ -141,11 +141,31 @@ Settings are managed in `cdk.json` under `context`.
 | `webhookUrlParameterName` | SSM Parameter Store name for Webhook URL |
 | `rssUrl` | RSS feed URLs (multiple supported) |
 | `schedule` | (Optional) CRON schedule for RSS polling |
+| `filter` | (Optional) Post only some articles, see below |
 
 **Schedule example** (every 15 minutes):
 ```json
 "schedule": { "minute": "0/15", "hour": "*", "day": "*", "month": "*", "year": "*" }
 ```
+
+### Filtering articles (optional)
+Without `filter`, every new article is summarized and posted, as before. Add `filter` to a notifier to post only some of them:
+
+```json
+"filter": {
+  "categories": ["general:products/amazon-bedrock", "marketing:marchitecture/artificial-intelligence"],
+  "topics": ["Building applications with generative AI"],
+  "modelIds": ["global.anthropic.claude-haiku-5-5"]
+}
+```
+
+| Key | Description |
+|---|---|
+| `categories` | (Optional) RSS category tags. An article is kept when one of its tags equals a value, or starts with the value followed by `/` (`general:products` keeps every product tag). Case-insensitive. Articles without tags are kept. Checked by the crawler, with no Bedrock call |
+| `topics` | (Optional) Topics in plain text. Before summarizing, the model is asked whether the text to be summarized (the article, or its RSS description; see "How articles are read") is about one of them; only a clear "no" skips the article (`summary_status` = `filtered`). When the check fails or the answer is unclear, the article is posted |
+| `modelIds` | (Optional) Models for the `topics` check, tried in order. Defaults to `modelIds`. A smaller model keeps the extra cost low |
+
+Each `topics` check is one more Bedrock call per article that passes `categories`. Changing or removing `filter` later does not post the articles that were filtered out before. `cdk synth` fails with a message when `filter` has the wrong shape or makes the settings too large for a Lambda environment (4 KB) or an EventBridge target input (8,192 characters).
 
 ### How articles are read
 The notify Lambda opens each article URL from the RSS feed and summarizes the text of its `<main>` element, or `<article>`, or `<body>` (without navigation, headers, footers and scripts), up to 50,000 characters. When the page cannot be fetched or has less than 200 characters of text, the RSS description of the entry is summarized instead; the entry is skipped only when neither is available. `summary_source` in the DynamoDB item shows which one was used.

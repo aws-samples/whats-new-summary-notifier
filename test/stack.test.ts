@@ -50,7 +50,7 @@ describe('WhatsNewSummaryNotifierStack', () => {
     const template = createStack();
     template.hasResourceProperties('AWS::Lambda::Function', {
       Handler: 'index.handler',
-      Runtime: 'python3.14',
+      Runtime: 'python3.15',
       Timeout: 180,
       Environment: {
         Variables: Match.objectLike({
@@ -196,5 +196,52 @@ describe('WhatsNewSummaryNotifierStack', () => {
     template.resourceCountIs('AWS::Events::Rule', 1);
     const policies = JSON.stringify(template.findResources('AWS::IAM::Policy'));
     expect(policies).toContain('parameter/WhatsNew/URL/googlechat');
+  });
+
+  describe('notifier filter', () => {
+    const notifierWith = (filter: unknown) => ({
+      notifiers: {
+        AwsWhatsNew: {
+          destination: 'slack',
+          summarizerName: 'AwsSolutionsArchitectJapanese',
+          webhookUrlParameterName: '/WhatsNew/URL',
+          rssUrl: { feed: 'https://example.com/feed' },
+          filter,
+        },
+      },
+    });
+
+    test('a valid filter is passed to both Lambda functions', () => {
+      const filter = { categories: ['general:products/amazon-bedrock'], topics: ['generative AI'] };
+      const template = createStack(notifierWith(filter));
+      const functions = Object.values(template.findResources('AWS::Lambda::Function')) as {
+        Properties: { Environment?: { Variables?: Record<string, unknown> } };
+      }[];
+      const notifierEnvs = functions
+        .map((f) => f.Properties.Environment?.Variables?.NOTIFIERS)
+        .filter((v): v is string => typeof v === 'string');
+      expect(notifierEnvs).toHaveLength(2);
+      for (const env of notifierEnvs) {
+        expect(JSON.parse(env).AwsWhatsNew.filter).toEqual(filter);
+      }
+    });
+
+    test('rejects a filter that is not an object', () => {
+      expect(() => createStack(notifierWith(['general:products']))).toThrow('notifiers.AwsWhatsNew.filter must be an object');
+    });
+
+    test('rejects categories that are not a list of strings', () => {
+      expect(() => createStack(notifierWith({ categories: 'general:products' }))).toThrow(
+        'notifiers.AwsWhatsNew.filter.categories must be an array of strings'
+      );
+    });
+
+    test('rejects settings too large for the Lambda environment', () => {
+      expect(() => createStack(notifierWith({ topics: ['x'.repeat(4000)] }))).toThrow(/Lambda environment variables/);
+    });
+
+    test('rejects settings too large for the EventBridge target input', () => {
+      expect(() => createStack(notifierWith({ topics: ['x'.repeat(9000)] }))).toThrow(/EventBridge target input/);
+    });
   });
 });

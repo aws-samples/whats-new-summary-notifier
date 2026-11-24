@@ -61,7 +61,8 @@ export function App() {
   const [modelsRegion, setModelsRegion] = useState('');
 
   // Structured config for GUI editor
-  type NotifierConfig = { destination: string; summarizerName: string; webhookUrlParameterName: string; rssUrl: Record<string, string> };
+  type NotifierFilter = { categories?: string[]; topics?: string[]; modelIds?: string[] };
+  type NotifierConfig = { destination: string; summarizerName: string; webhookUrlParameterName: string; rssUrl: Record<string, string>; filter?: NotifierFilter };
   type SummarizerConfig = { outputLanguage: string; persona: string };
   const [guiConfig, setGuiConfig] = useState<{
     modelRegion: string; modelIds: string[];
@@ -802,6 +803,12 @@ export function App() {
                                   className="text-xs text-blue-600">+ Add RSS</button>
                               </div>
                             </div>
+                            {n.filter && (
+                              <div className="text-xs text-gray-500">
+                                <span className="font-medium">Filter</span> (edit in the JSON tab):{' '}
+                                <code className="font-mono break-all">{JSON.stringify(n.filter)}</code>
+                              </div>
+                            )}
                           </div>
                         ))}
                         <button onClick={() => updateGui({ notifiers: { ...guiConfig.notifiers, [`Notifier${Object.keys(guiConfig.notifiers).length + 1}`]: { destination: 'slack', summarizerName: Object.keys(guiConfig.summarizers)[0] ?? 'default', webhookUrlParameterName: '/WhatsNew/URL', rssUrl: { "What's new": 'https://aws.amazon.com/about-aws/whats-new/recent/feed/' } } } })}
