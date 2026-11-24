@@ -33,7 +33,7 @@ Refer to [this documentation](https://slack.com/help/articles/17542172840595-Bui
 * `detail`: A bulleted description of the article
 
 #### For Microsoft Teams
-Refer to [this documentation](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook?tabs=newteams%2Cdotnet) to create the Webhook URL.
+Microsoft retired Office 365 connectors in Teams, including the connector-based Incoming Webhook, in May 2026. Create the webhook with the Workflows app: in the channel, select **More options (...)** > **Workflows**, pick the **Send webhook alerts to a channel** template, choose the team and channel, select **Save**, and copy the webhook URL. The other webhook templates ("from specific people", "from people in an org") need a sign-in token, which this application does not send. See [Create an Incoming Webhook](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook) and the [Deployment Guide](DEPLOY.md#for-microsoft-teams), which also covers replacing an old connector URL.
 
 #### For Google Chat (preview)
 Google Chat support is a preview: it has not been tested against a real Google Chat space yet. Refer to [Google Chat incoming webhooks](https://developers.google.com/workspace/chat/quickstart/webhooks) and register a webhook in the space (Apps & integrations > Add webhooks), then copy its URL. Your Google Workspace organization must allow incoming webhooks. The URL contains a secret token, so do not share it; it is stored in SSM Parameter Store as a SecureString like the other webhook URLs.
@@ -72,7 +72,7 @@ Or manually:
 cdk destroy
 ```
 By default, some resources such as the Amazon DynamoDB table are set to not be deleted.
-If you need to completely delete everything, you will need to access the remaining resources and manually delete them.
+If you need to completely delete everything, you will need to access the remaining resources and manually delete them. See [What remains after destroy](DEPLOY.md#what-remains-after-destroy) for the list and the commands.
 
 ## Third Party Services
 This code interacts with Slack, Microsoft Teams or Google Chat which has terms published at [Terms Page (Slack)](https://slack.com/main-services-agreement) / [Terms Page (Microsoft 365)](https://www.microsoft.com/en/servicesagreement) / [Terms Page (Google Workspace)](https://workspace.google.com/terms/premier_terms/), and pricing described at [Pricing Page (Slack)](https://slack.com/pricing) / [Pricing Page (Microsoft 365)](https://www.microsoft.com/en-us/microsoft-365/business/compare-all-microsoft-365-business-products?&activetab=tab:primaryr2) / [Pricing Page (Google Workspace)](https://workspace.google.com/pricing). You should be familiar with the pricing and confirm that your use case complies with the terms before proceeding.
