@@ -12,6 +12,8 @@
 ## 主要 AWS サービス
 - Amazon Bedrock（モデルフォールバックプール — `modelIds` 配列で複数指定）
 - Amazon DynamoDB（RSS 履歴 + 要約結果の書き戻し、Streams で変更検知）
+- Amazon SQS（通知 Lambda のイベントソースの失敗の送り先）
+- Amazon CloudWatch（IteratorAge と失敗キューのアラーム）
 - Amazon EventBridge（定期スケジュール）
 - AWS Lambda（RSS クロール、通知処理）
 - AWS Systems Manager Parameter Store（Webhook URL の安全な格納）

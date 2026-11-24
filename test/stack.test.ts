@@ -162,6 +162,65 @@ describe('WhatsNewSummaryNotifierStack', () => {
     });
   });
 
+  test('event source passes INSERT only and bounds retries with a failure queue', () => {
+    const template = createStack();
+    template.resourceCountIs('AWS::SQS::Queue', 1);
+    const queueId = Object.keys(template.findResources('AWS::SQS::Queue'))[0];
+    template.hasResourceProperties('AWS::Lambda::EventSourceMapping', {
+      FilterCriteria: { Filters: [{ Pattern: JSON.stringify({ eventName: ['INSERT'] }) }] },
+      MaximumRetryAttempts: 2,
+      MaximumRecordAgeInSeconds: 6 * 60 * 60,
+      DestinationConfig: { OnFailure: { Destination: { 'Fn::GetAtt': [queueId, 'Arn'] } } },
+    });
+  });
+
+  test('failure queue is encrypted, requires TLS and only the notify role can send to it', () => {
+    const template = createStack();
+    template.hasResourceProperties('AWS::SQS::Queue', {
+      SqsManagedSseEnabled: true,
+      MessageRetentionPeriod: 14 * 24 * 60 * 60,
+    });
+    template.hasResourceProperties('AWS::SQS::QueuePolicy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({ Effect: 'Deny', Condition: { Bool: { 'aws:SecureTransport': 'false' } } }),
+        ]),
+      },
+    });
+    const queueId = Object.keys(template.findResources('AWS::SQS::Queue'))[0];
+    const sendStatements = Object.entries(template.findResources('AWS::IAM::Policy')).flatMap(([id, p]) =>
+      (p as { Properties: { PolicyDocument: { Statement: { Action: string | string[]; Resource: unknown }[] } } })
+        .Properties.PolicyDocument.Statement.filter((s) => [s.Action].flat().includes('sqs:SendMessage')).map(
+          (s) => ({ id, resource: s.Resource })
+        )
+    );
+    expect(sendStatements).toHaveLength(1);
+    expect(sendStatements[0].id).toMatch(/^NotifyNewEntryRole/);
+    expect(sendStatements[0].resource).toEqual({ 'Fn::GetAtt': [queueId, 'Arn'] });
+  });
+
+  test('alarms on IteratorAge and the failure queue, without actions', () => {
+    const template = createStack();
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 2);
+    template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      MetricName: 'IteratorAge',
+      Namespace: 'AWS/Lambda',
+      Statistic: 'Maximum',
+      Threshold: 30 * 60 * 1000,
+      ComparisonOperator: 'GreaterThanThreshold',
+      TreatMissingData: 'notBreaching',
+    });
+    template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      MetricName: 'ApproximateNumberOfMessagesVisible',
+      Namespace: 'AWS/SQS',
+      Threshold: 1,
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+    });
+    for (const alarm of Object.values(template.findResources('AWS::CloudWatch::Alarm'))) {
+      expect((alarm as { Properties: Record<string, unknown> }).Properties.AlarmActions).toBeUndefined();
+    }
+  });
+
   test('multiple notifiers create multiple EventBridge rules', () => {
     const template = createStack({
       notifiers: {

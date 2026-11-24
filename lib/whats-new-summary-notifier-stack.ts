@@ -4,8 +4,10 @@ import { Table, AttributeType, BillingMode, StreamViewType } from 'aws-cdk-lib/a
 import { Rule, Schedule, RuleTargetInput, CronOptions } from 'aws-cdk-lib/aws-events';
 import { LambdaFunction } from 'aws-cdk-lib/aws-events-targets';
 import { Role, Policy, ServicePrincipal, PolicyStatement, Effect } from 'aws-cdk-lib/aws-iam';
-import { Runtime, StartingPosition } from 'aws-cdk-lib/aws-lambda';
-import { DynamoEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
+import { Runtime, StartingPosition, FilterCriteria, FilterRule } from 'aws-cdk-lib/aws-lambda';
+import { DynamoEventSource, SqsDlq } from 'aws-cdk-lib/aws-lambda-event-sources';
+import { Queue, QueueEncryption } from 'aws-cdk-lib/aws-sqs';
+import { Alarm, ComparisonOperator, TreatMissingData } from 'aws-cdk-lib/aws-cloudwatch';
 import { PythonFunction } from '@aws-cdk/aws-lambda-python-alpha';
 import { RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { StringParameter } from 'aws-cdk-lib/aws-ssm';
@@ -139,12 +141,49 @@ export class WhatsNewSummaryNotifierStack extends Stack {
       environment: notifyEnvironment,
     });
 
+    // Records that still fail after the retries below. Lambda sends only metadata about the
+    // failed batch (shard, sequence numbers, reason), not the article itself.
+    const notifyFailureQueue = new Queue(this, 'NotifyFailureQueue', {
+      encryption: QueueEncryption.SQS_MANAGED,
+      enforceSSL: true,
+      retentionPeriod: Duration.days(14),
+    });
+
     notifyNewEntry.addEventSource(
       new DynamoEventSource(rssHistoryTable, {
         startingPosition: StartingPosition.LATEST,
+        // One record per invocation, so a retry never posts another article again
         batchSize: 1,
+        // Only new articles: the notify Lambda's own write-backs are MODIFY records
+        filters: [FilterCriteria.filter({ eventName: FilterRule.isEqual('INSERT') })],
+        // The notify Lambda raises only failures a retry may fix (throttling, 5xx, timeouts)
+        retryAttempts: 2,
+        maxRecordAge: Duration.hours(6),
+        onFailure: new SqsDlq(notifyFailureQueue),
       })
     );
+
+    // Alarms without actions: add an action (for example an SNS topic) in CloudWatch if you
+    // want to be told. IteratorAge is how far the notify Lambda is behind the stream.
+    new Alarm(this, 'NotifyIteratorAgeAlarm', {
+      alarmDescription: 'The notify Lambda is more than 30 minutes behind the DynamoDB stream',
+      metric: notifyNewEntry.metric('IteratorAge', { statistic: 'Maximum', period: Duration.minutes(5) }),
+      threshold: Duration.minutes(30).toMilliseconds(),
+      evaluationPeriods: 1,
+      comparisonOperator: ComparisonOperator.GREATER_THAN_THRESHOLD,
+      treatMissingData: TreatMissingData.NOT_BREACHING,
+    });
+    new Alarm(this, 'NotifyFailureQueueAlarm', {
+      alarmDescription: 'Articles were not notified after the retries; see the NotifyFailureQueue messages',
+      metric: notifyFailureQueue.metricApproximateNumberOfMessagesVisible({
+        statistic: 'Maximum',
+        period: Duration.minutes(5),
+      }),
+      threshold: 1,
+      evaluationPeriods: 1,
+      comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: TreatMissingData.NOT_BREACHING,
+    });
 
     // Allow writing to DynamoDB
     rssHistoryTable.grantWriteData(newsCrawlerRole);
