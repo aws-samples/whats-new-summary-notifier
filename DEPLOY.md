@@ -10,7 +10,15 @@ Deploy using [AWS CloudShell](https://console.aws.amazon.com/cloudshell/home) â€
 Refer to [Slack Workflow documentation](https://slack.com/help/articles/17542172840595-Build-a-workflow--Create-a-workflow-in-Slack). Create a workflow with 5 text variables: `rss_time`, `rss_link`, `rss_title`, `summary`, `detail`.
 
 #### For Microsoft Teams
-Refer to [Teams Incoming Webhook documentation](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook?tabs=newteams%2Cdotnet).
+Microsoft retired Office 365 connectors in Teams, including the connector-based Incoming Webhook, in May 2026. Create the webhook with the Workflows app instead ([Create an Incoming Webhook](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook), [Send messages in Teams using incoming webhooks](https://support.microsoft.com/en-us/office/send-messages-in-teams-using-incoming-webhooks-323660ec-12ca-40b1-a1d3-a3df47e808c4)):
+
+1. In Teams, go to the channel, select **More options (...)** next to it, and select **Workflows**.
+2. Select the **Send webhook alerts to a channel** template. The notifier sends no sign-in token, so the templates "from specific people" and "from people in an org" do not work with it.
+3. Choose the team and channel, select **Save**, and copy the webhook URL shown on the workflow's details page.
+
+Posts appear under the Workflows bot. Anyone who has the URL can post to the channel, so keep it secret. The workflow belongs to the person who created it; add a co-owner so that it keeps working if that person leaves.
+
+If you deployed with a connector URL before, it no longer works. Create a workflow as above and put its URL in the same SSM parameter (`/WhatsNew/URL`, or `/WhatsNew/URL/<tenant>`), for example by editing the parameter in Systems Manager Parameter Store or by running `bash deploy.sh` again. The notify Lambda reads the parameter for every article, so it uses the new URL without a redeploy.
 
 #### For Google Chat (preview)
 Google Chat support is a preview and has not been tested against a real Google Chat space yet. Refer to [Google Chat incoming webhooks](https://developers.google.com/workspace/chat/quickstart/webhooks): register a webhook in the space (Apps & integrations > Add webhooks) and copy its URL. Your Google Workspace organization must allow incoming webhooks. Keep the URL secret; it contains a token.
@@ -188,4 +196,32 @@ bash deploy.sh --destroy --tenant test  # specific tenant
 
 The script deletes the CDK stack with a CodeBuild build and waits for that build to finish. When the build succeeds, it cleans up the CodeBuild project, IAM role, and SSM parameter. When the build fails, it keeps them and exits with an error, so you can check the build logs and run the same command again.
 
+If the script stops while it waits for the build (you press Ctrl+C, close the terminal, or the CloudShell session ends), the build keeps running in CodeBuild, but the cleanup does not run, so the CodeBuild project, IAM role, and SSM parameter stay. Run the same `deploy.sh --destroy` command again. It starts another destroy build, which succeeds even when the stack is already gone, and then cleans up the three resources.
+
 For manual cleanup: `cdk destroy` or `cdk destroy -c tenant=test`
+
+### What remains after destroy
+
+Deleting the stack does not delete everything. These resources stay in the account and Region.
+
+| Resource | Name | Why it stays |
+|---|---|---|
+| DynamoDB table (the RSS history) | `<stack name>-WhatsNewRSSHistory...` | The table uses the CDK default removal policy `RETAIN`, so CloudFormation skips it (`DELETE_SKIPPED`) |
+| Lambda log groups (3) | `/aws/lambda/<stack name>-NotifyNewEntry...`, `-newsCrawler...`, `-LogRetention...` | The functions set `logRetention`; CDK creates these log groups outside the stack, so they are not deleted with it |
+| CodeBuild log group | `/aws/codebuild/whats-new-summary-notifier[-<tenant>]` | CodeBuild creates it; `deploy.sh` deletes the project but not its logs |
+| CDKToolkit stack and its assets bucket | `CDKToolkit`, `cdk-hnb659fds-assets-<account>-<region>` | Created by `cdk bootstrap` and shared by every CDK app in the account and Region. Deleting CDKToolkit also keeps the bucket (`DELETE_SKIPPED`) |
+
+`<stack name>` is `WhatsNewSummaryNotifierStack`, or `WhatsNewSummaryNotifier-<tenant>` for a tenant (long names are shortened in the log group names). To remove them, after the destroy has finished:
+
+```bash
+# DynamoDB table (this deletes the stored articles and their summaries)
+aws dynamodb list-tables --query "TableNames[?contains(@, 'WhatsNewRSSHistory')]"
+aws dynamodb delete-table --table-name <table name>
+
+# Log groups
+aws logs describe-log-groups --log-group-name-prefix /aws/lambda/WhatsNewSummaryNotifier --query 'logGroups[].logGroupName'
+aws logs describe-log-groups --log-group-name-prefix /aws/codebuild/whats-new-summary-notifier --query 'logGroups[].logGroupName'
+aws logs delete-log-group --log-group-name <log group name>
+```
+
+Delete CDKToolkit only when no other CDK app in the account and Region uses it. The assets bucket is versioned, so delete every object version and delete marker before you delete the bucket (for example, empty it in the S3 console, then delete it). The tables and log groups of other tenants and other stacks may match the same prefixes, so check each name before you delete it.

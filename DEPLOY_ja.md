@@ -10,7 +10,15 @@
 [Slack ワークフロードキュメント](https://slack.com/intl/ja-jp/help/articles/360041352714)を参考に Webhook URL を取得してください。テキスト型の変数を 5 つ作成します: `rss_time`, `rss_link`, `rss_title`, `summary`, `detail`
 
 #### Microsoft Teams の場合
-[Teams Incoming Webhook ドキュメント](https://learn.microsoft.com/ja-jp/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook?tabs=newteams%2Cdotnet)を参考に Webhook URL を取得してください。
+Microsoft は 2026 年 5 月に Teams の Office 365 コネクタ（コネクタで作る Incoming Webhook を含む）を廃止しました。代わりに Workflows アプリで Webhook を作ります（[Create an Incoming Webhook](https://learn.microsoft.com/ja-jp/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook)、[Send messages in Teams using incoming webhooks](https://support.microsoft.com/en-us/office/send-messages-in-teams-using-incoming-webhooks-323660ec-12ca-40b1-a1d3-a3df47e808c4)）。
+
+1. Teams で通知先のチャネルを開き、チャネル名の横の **その他のオプション（...）** から **ワークフロー** を選びます。
+2. テンプレート **Send webhook alerts to a channel** を選びます（日本語の画面では訳された名前で表示されます）。通知の Lambda はサインインのトークンを送らないので、「from specific people」「from people in an org」のテンプレートでは動きません。
+3. チームとチャネルを選んで **保存** し、ワークフローの詳細ページに出る Webhook URL をコピーします。
+
+投稿は Workflows のボットの名前で表示されます。URL を知っていれば誰でもチャネルに投稿できるので、URL は共有しないでください。ワークフローは作った人のものになるので、その人が退職や異動をしても動き続けるように共同所有者を足しておくと安心です。
+
+以前にコネクタの URL でデプロイした場合、その URL はもう使えません。上の手順でワークフローを作り、その URL を同じ SSM パラメータ（`/WhatsNew/URL` または `/WhatsNew/URL/<テナント名>`）に入れてください。Systems Manager の Parameter Store でパラメータを編集するか、`bash deploy.sh` をもう一度実行します。通知の Lambda は記事ごとにパラメータを読むので、再デプロイしなくても新しい URL が使われます。
 
 #### Google Chat の場合（preview）
 Google Chat への通知は preview の機能で、実際の Google Chat スペースでの動作はまだ確認していません。[Google Chat の受信 Webhook のドキュメント](https://developers.google.com/workspace/chat/quickstart/webhooks)を参考に、スペースで Webhook を登録し（アプリと統合 > Webhook を追加）、URL をコピーしてください。Google Workspace の組織で受信 Webhook が許可されている必要があります。URL にはトークンが含まれるので共有しないでください。
@@ -188,4 +196,32 @@ bash deploy.sh --destroy --tenant test  # 特定テナント
 
 スクリプトは CodeBuild のビルドで CDK スタックを削除し、そのビルドの終了を待ちます。ビルドが成功すると、CodeBuild プロジェクト、IAM ロール、SSM パラメータを削除します。ビルドが失敗した場合はこれらを残してエラーで終了するので、ビルドログを確認してから同じコマンドをもう一度実行してください。
 
+ビルドの終了を待っている間にスクリプトが止まると（Ctrl+C、ターミナルを閉じた、CloudShell のセッションが切れたなど）、ビルドは CodeBuild で動き続けますが、片付けは実行されないので、CodeBuild プロジェクト、IAM ロール、SSM パラメータが残ります。同じ `deploy.sh --destroy` のコマンドをもう一度実行してください。もう一度 destroy のビルドが動き（スタックがすでに消えていても成功します）、そのあとで 3 つを削除します。
+
 手動削除: `cdk destroy` または `cdk destroy -c tenant=test`
+
+### 削除のあとに残るもの
+
+スタックを削除しても、次のリソースはアカウントとリージョンに残ります。
+
+| リソース | 名前 | 残る理由 |
+|---|---|---|
+| DynamoDB テーブル（RSS の履歴） | `<スタック名>-WhatsNewRSSHistory...` | テーブルは CDK の既定の削除ポリシー `RETAIN` のままなので、CloudFormation が削除を飛ばします（`DELETE_SKIPPED`） |
+| Lambda のロググループ（3 つ） | `/aws/lambda/<スタック名>-NotifyNewEntry...`、`-newsCrawler...`、`-LogRetention...` | 関数に `logRetention` を設定しているため、CDK はロググループをスタックの外で作ります。スタックと一緒には消えません |
+| CodeBuild のロググループ | `/aws/codebuild/whats-new-summary-notifier[-<テナント名>]` | CodeBuild が作ります。`deploy.sh` はプロジェクトを消しますが、ログは消しません |
+| CDKToolkit スタックとその資産バケット | `CDKToolkit`、`cdk-hnb659fds-assets-<アカウント ID>-<リージョン>` | `cdk bootstrap` が作り、同じアカウントとリージョンのすべての CDK アプリが共有します。CDKToolkit を削除してもバケットは残ります（`DELETE_SKIPPED`） |
+
+`<スタック名>` は `WhatsNewSummaryNotifierStack`、テナントなら `WhatsNewSummaryNotifier-<テナント名>` です（ロググループの名前では長い名前が途中で切られます）。削除する場合は、destroy が終わってから次のように実行します。
+
+```bash
+# DynamoDB テーブル（保存した記事と要約が消えます）
+aws dynamodb list-tables --query "TableNames[?contains(@, 'WhatsNewRSSHistory')]"
+aws dynamodb delete-table --table-name <テーブル名>
+
+# ロググループ
+aws logs describe-log-groups --log-group-name-prefix /aws/lambda/WhatsNewSummaryNotifier --query 'logGroups[].logGroupName'
+aws logs describe-log-groups --log-group-name-prefix /aws/codebuild/whats-new-summary-notifier --query 'logGroups[].logGroupName'
+aws logs delete-log-group --log-group-name <ロググループ名>
+```
+
+CDKToolkit は、同じアカウントとリージョンでほかの CDK アプリが使っていないときだけ削除してください。資産バケットはバージョニングが有効なので、オブジェクトのすべてのバージョンと削除マーカーを消してからバケットを削除します（S3 コンソールの「空にする」を使ってから削除するなど）。ほかのテナントやスタックのテーブルやロググループも同じ接頭辞に当たることがあるので、削除する前に名前を 1 つずつ確かめてください。

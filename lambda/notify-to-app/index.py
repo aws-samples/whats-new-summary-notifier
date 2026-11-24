@@ -463,11 +463,21 @@ def create_google_chat_message(item):
 
 
 def create_teams_message(item):
+    """Build an Adaptive Card message for a Teams Workflows webhook
+
+    The shape follows the request body of the "When a Teams webhook request is
+    received" trigger: type "message" and attachments of
+    {contentType, contentUrl: null, content}.
+
+    Args:
+        item (dict): The article with its summary and detail
+    """
     message = {
         "type": "message",
         "attachments": [
             {
                 "contentType": "application/vnd.microsoft.card.adaptive",
+                "contentUrl": None,
                 "content": {
                     "type": "AdaptiveCard",
                     "version": "1.3",
