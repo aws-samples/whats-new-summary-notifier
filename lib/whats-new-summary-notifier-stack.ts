@@ -1,5 +1,5 @@
 import { Construct } from 'constructs';
-import { Stack, StackProps, Duration, CfnOutput } from 'aws-cdk-lib';
+import { Stack, StackProps, Duration, CfnOutput, RemovalPolicy } from 'aws-cdk-lib';
 import { Table, AttributeType, BillingMode, StreamViewType } from 'aws-cdk-lib/aws-dynamodb';
 import { Rule, Schedule, RuleTargetInput, CronOptions } from 'aws-cdk-lib/aws-events';
 import { LambdaFunction } from 'aws-cdk-lib/aws-events-targets';
@@ -9,7 +9,7 @@ import { DynamoEventSource, SqsDlq } from 'aws-cdk-lib/aws-lambda-event-sources'
 import { Queue, QueueEncryption } from 'aws-cdk-lib/aws-sqs';
 import { Alarm, ComparisonOperator, TreatMissingData } from 'aws-cdk-lib/aws-cloudwatch';
 import { PythonFunction } from '@aws-cdk/aws-lambda-python-alpha';
-import { RetentionDays } from 'aws-cdk-lib/aws-logs';
+import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { StringParameter } from 'aws-cdk-lib/aws-ssm';
 import * as path from 'path';
 
@@ -128,6 +128,17 @@ export class WhatsNewSummaryNotifierStack extends Stack {
     };
     validateNotifierFilters(notifiers, [notifyEnvironment, crawlerEnvironment]);
 
+    // Log groups that the stack owns. CloudFormation names them (<stack name>-<id>-<suffix>):
+    // a deployment made with the old logRetention setting already has /aws/lambda/<function
+    // name>, so reusing that name would fail on update. RETAIN_ON_UPDATE_OR_DELETE keeps the logs
+    // when the stack is deleted, and deletes a log group only when the update that created it
+    // is rolled back.
+    const newLogGroup = (id: string) =>
+      new LogGroup(this, id, {
+        retention: RetentionDays.TWO_WEEKS,
+        removalPolicy: RemovalPolicy.RETAIN_ON_UPDATE_OR_DELETE,
+      });
+
     // Lambda Function to post new entries written to DynamoDB to Slack or Microsoft Teams
     const notifyNewEntry = new PythonFunction(this, 'NotifyNewEntry', {
       runtime: Runtime.PYTHON_3_15,
@@ -135,7 +146,7 @@ export class WhatsNewSummaryNotifierStack extends Stack {
       handler: 'handler',
       index: 'index.py',
       timeout: Duration.seconds(180),
-      logRetention: RetentionDays.TWO_WEEKS,
+      logGroup: newLogGroup('NotifyNewEntryLogGroup'),
       role: notifyNewEntryRole,
       reservedConcurrentExecutions: 1,
       environment: notifyEnvironment,
@@ -196,7 +207,7 @@ export class WhatsNewSummaryNotifierStack extends Stack {
       handler: 'handler',
       index: 'index.py',
       timeout: Duration.seconds(60),
-      logRetention: RetentionDays.TWO_WEEKS,
+      logGroup: newLogGroup('NewsCrawlerLogGroup'),
       role: newsCrawlerRole,
       environment: crawlerEnvironment,
     });

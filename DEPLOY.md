@@ -35,6 +35,8 @@ bash deploy.sh
 
 The interactive wizard will ask for notification destination, language, and Webhook URL. Deployment runs via AWS CodeBuild (Docker and Node.js are handled automatically).
 
+If you deployed before the stack created its own log groups, an update moves the Lambda logs to two new log groups whose names start with the stack name (see [Lambda logs](#lambda-logs)). The old `/aws/lambda/...` log groups stay and get no new events; their events expire after 14 days. Metric filters, subscription filters, and saved Logs Insights queries on the old log groups stop matching new logs, so point them at the new log groups.
+
 #### Non-Interactive Mode
 
 ```bash
@@ -187,6 +189,15 @@ Any other failure (no text to summarize, a webhook 4xx, no access to the model) 
 
 When the retries do not help, Lambda sends a message about the failed stream record (not the article itself) to the SQS queue whose name contains `NotifyFailureQueue`, which keeps messages for 14 days. The stack creates two CloudWatch alarms without actions: one when that queue has a message, and one when the notify Lambda is more than 30 minutes behind the stream (`IteratorAge`). To be told, add an action such as an SNS topic to the alarms in CloudWatch. To find articles that were not posted, look for items whose `summary_status` is `failed`, or is not set on an item without a `filter_result`.
 
+### Lambda logs
+Each Lambda function writes to a log group that the stack creates and keeps for 14 days. CloudFormation names it: `<stack name>-NotifyNewEntryLogGroup...` for the notify Lambda and `<stack name>-NewsCrawlerLogGroup...` for the crawler. To find them:
+
+```bash
+aws logs describe-log-groups --log-group-name-prefix WhatsNewSummaryNotifier --query 'logGroups[].logGroupName'
+```
+
+For 14 days after an update from an earlier version, older events are still in `/aws/lambda/<stack name>-NotifyNewEntry...` and `/aws/lambda/<stack name>-newsCrawler...`. Select both log groups in Logs Insights to search across the update.
+
 ## Destroy
 
 ```bash
@@ -207,7 +218,8 @@ Deleting the stack does not delete everything. These resources stay in the accou
 | Resource | Name | Why it stays |
 |---|---|---|
 | DynamoDB table (the RSS history) | `<stack name>-WhatsNewRSSHistory...` | The table uses the CDK default removal policy `RETAIN`, so CloudFormation skips it (`DELETE_SKIPPED`) |
-| Lambda log groups (3) | `/aws/lambda/<stack name>-NotifyNewEntry...`, `-newsCrawler...`, `-LogRetention...` | The functions set `logRetention`; CDK creates these log groups outside the stack, so they are not deleted with it |
+| Lambda log groups (2) | `<stack name>-NotifyNewEntryLogGroup...`, `<stack name>-NewsCrawlerLogGroup...` | Their removal policy keeps the logs when the stack is deleted (`DELETE_SKIPPED`) |
+| Older Lambda log groups (3, only for stacks first deployed before the stack created its own log groups) | `/aws/lambda/<stack name>-NotifyNewEntry...`, `-newsCrawler...`, `-LogRetention...` | They were created outside the stack by the earlier `logRetention` setting |
 | CodeBuild log group | `/aws/codebuild/whats-new-summary-notifier[-<tenant>]` | CodeBuild creates it; `deploy.sh` deletes the project but not its logs |
 | CDKToolkit stack and its assets bucket | `CDKToolkit`, `cdk-hnb659fds-assets-<account>-<region>` | Created by `cdk bootstrap` and shared by every CDK app in the account and Region. Deleting CDKToolkit also keeps the bucket (`DELETE_SKIPPED`) |
 
@@ -219,6 +231,7 @@ aws dynamodb list-tables --query "TableNames[?contains(@, 'WhatsNewRSSHistory')]
 aws dynamodb delete-table --table-name <table name>
 
 # Log groups
+aws logs describe-log-groups --log-group-name-prefix WhatsNewSummaryNotifier --query 'logGroups[].logGroupName'
 aws logs describe-log-groups --log-group-name-prefix /aws/lambda/WhatsNewSummaryNotifier --query 'logGroups[].logGroupName'
 aws logs describe-log-groups --log-group-name-prefix /aws/codebuild/whats-new-summary-notifier --query 'logGroups[].logGroupName'
 aws logs delete-log-group --log-group-name <log group name>
