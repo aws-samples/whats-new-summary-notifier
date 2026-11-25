@@ -181,7 +181,7 @@ cdk deploy
 リクエストは `whats-new-summary-notifier` の User-Agent を付け、公開の `http`/`https` のアドレスにだけ送ります（リダイレクトのたびに確認し、5 回まで）。タイムアウトは 10 秒、ダウンロード全体の上限は 20 秒、大きさの上限は 5 MB です。
 
 ### 通知できなかったとき
-投稿の前の失敗のうち、次の回には起きないかもしれないもの（Bedrock のスロットリングや 5xx エラー、Webhook が 429 や 5xx を返す、接続できない、タイムアウト）では、通知 Lambda はエラーで終わり、Lambda がその記事を 2 回まで再試行します。最後の試行でも失敗したときは、項目に `summary_status` = `failed` と、`retries exhausted:` で始まる `failure_reason` を書きます。ストリームで 6 時間を超えて待った記事は再試行しません。通知 Lambda は試行の回数を項目の `notify_attempts` に数え、項目にすでに `summary_status` がある記録では何もしないので、同じ記録が 2 回届いても 2 回投稿しません。
+投稿の前の失敗のうち、次の回には起きないかもしれないもの（Bedrock のスロットリングや 5xx エラー、Webhook が 429 や 5xx を返す、接続できない、タイムアウト）では、通知 Lambda はエラーで終わり、Lambda がその記事を 2 回まで再試行します。最後の試行でも失敗したときは、項目に `summary_status` = `failed` と、`retries exhausted:` で始まる `failure_reason` を書きます。ストリームで 6 時間を超えて待った記事は再試行しません。通知 Lambda は試行の回数を項目の `notify_attempts` に数え、項目にすでに `summary_status` がある記録では何もしないので、同じ記録が 2 回届いても 2 回投稿しません。投稿の前に要約を項目の `pending` 属性に保存し、再試行ではその要約を使って、記事の取得・判定・要約をやり直さずに投稿します。`completed` を書くときに `pending` は消えます。Management Console は `pending` を表示しません。
 
 それ以外の失敗（要約する文が無い、Webhook の 4xx、モデルを使う権限が無い）は、DynamoDB の項目に `summary_status` = `failed` と `failure_reason` を書き、再試行しません。Webhook に要求を送ったのに 10 秒以内に答えが返らなかったときも、すでに投稿されているかもしれないので `failed` にします。再試行で同じ記事を 2 回投稿することはありません。
 

@@ -357,7 +357,34 @@ def judge_relevance(blog_body, topics, model_ids):
     return None
 
 
-def push_notification(item_list, context=None):
+PENDING_KEYS = ("summary", "detail", "summary_source", "model_id", "latency_sec", "input_tokens", "output_tokens")
+
+
+def is_pending_summary(pending):
+    """True when an earlier attempt saved a usable summary in the item's pending attribute"""
+    return isinstance(pending, dict) and all(k in pending for k in PENDING_KEYS)
+
+
+def save_pending(item, record):
+    """Keep the summary on the item before the post, so a retry posts it without summarizing again
+
+    The pending attribute is not shown by the Management Console; the completed write copies it
+    to summary and the other attributes and removes it. A failure here only means a retry
+    summarizes again, so it never stops the post.
+    """
+    try:
+        ddb_table.update_item(
+            Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
+            UpdateExpression="SET pending = :p",
+            ConditionExpression="attribute_exists(#url) AND attribute_not_exists(summary_status)",
+            ExpressionAttributeNames={"#url": "url"},
+            ExpressionAttributeValues={":p": record},
+        )
+    except Exception as e:  # noqa: BLE001 - saving only avoids summarizing again on a retry
+        print(f"Failed to save the pending summary to DDB: {e}")
+
+
+def push_notification(item_list, context=None, pending=None):
     """Notify the arrival of articles
 
     Failures before the post are raised to the caller. After the webhook request is sent,
@@ -366,6 +393,8 @@ def push_notification(item_list, context=None):
     Args:
         item_list (list): List of articles to be notified
         context: The Lambda context, used to check the time left before the post
+        pending (dict): The summary an earlier attempt saved on the item, if any. With it,
+            the article is posted without fetching, judging or summarizing again.
     """
 
     for item in item_list:
@@ -381,44 +410,55 @@ def push_notification(item_list, context=None):
         
         item_url = item["rss_link"]
 
-        # Get the blog content. Fall back to the RSS description when the page
-        # cannot be fetched or has too little text.
-        content = get_blog_content(item_url)
-        source = "article"
-        if content is None or len(content) < article.MIN_CHARS:
-            description = article.description_text(item.get("rss_description", ""))
-            if description:
-                print(f"use the RSS description for {item_url}")
-                content, source = description, "rss_description"
-            elif content is None:
-                mark_failed(item, "no article text and no RSS description")
-                continue
+        if is_pending_summary(pending):
+            # An earlier attempt summarized the article and failed before the post
+            print(f"use the summary saved by an earlier attempt for {item_url}")
+            record = dict(pending)
+        else:
+            # Get the blog content. Fall back to the RSS description when the page
+            # cannot be fetched or has too little text.
+            content = get_blog_content(item_url)
+            source = "article"
+            if content is None or len(content) < article.MIN_CHARS:
+                description = article.description_text(item.get("rss_description", ""))
+                if description:
+                    print(f"use the RSS description for {item_url}")
+                    content, source = description, "rss_description"
+                elif content is None:
+                    mark_failed(item, "no article text and no RSS description")
+                    continue
 
-        # Optional topic filter: skip only on a clear "no"
-        topics = notifier_filter(notifier, "topics")
-        if topics:
-            relevant = judge_relevance(content, topics, notifier_filter(notifier, "modelIds") or MODEL_IDS)
-            if relevant is False:
-                print(f"skip {item_url}: not about the notifier's topics")
-                try:
-                    ddb_table.update_item(
-                        Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
-                        UpdateExpression="SET summary_status = :st",
-                        ConditionExpression="attribute_exists(#url)",
-                        ExpressionAttributeNames={"#url": "url"},
-                        ExpressionAttributeValues={":st": "filtered"},
-                    )
-                except Exception as e:  # noqa: BLE001 - the status is informational
-                    print(f"Failed to write the filtered status to DDB: {e}")
-                continue
+            # Optional topic filter: skip only on a clear "no"
+            topics = notifier_filter(notifier, "topics")
+            if topics:
+                relevant = judge_relevance(content, topics, notifier_filter(notifier, "modelIds") or MODEL_IDS)
+                if relevant is False:
+                    print(f"skip {item_url}: not about the notifier's topics")
+                    try:
+                        ddb_table.update_item(
+                            Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
+                            UpdateExpression="SET summary_status = :st",
+                            ConditionExpression="attribute_exists(#url)",
+                            ExpressionAttributeNames={"#url": "url"},
+                            ExpressionAttributeValues={":st": "filtered"},
+                        )
+                    except Exception as e:  # noqa: BLE001 - the status is informational
+                        print(f"Failed to write the filtered status to DDB: {e}")
+                    continue
 
-        # Summarize the blog
-        summarizer = SUMMARIZERS[notifier["summarizerName"]]
-        summary, detail, metrics = summarize_blog(content, language=summarizer["outputLanguage"], persona=summarizer["persona"])
+            # Summarize the blog
+            summarizer = SUMMARIZERS[notifier["summarizerName"]]
+            summary, detail, metrics = summarize_blog(content, language=summarizer["outputLanguage"], persona=summarizer["persona"])
+            record = {
+                "summary": summary, "detail": detail, "summary_source": source,
+                "model_id": metrics["model_id"], "latency_sec": json.dumps(metrics["latency_sec"]),
+                "input_tokens": metrics["input_tokens"], "output_tokens": metrics["output_tokens"],
+            }
+            save_pending(item, record)
 
         # Add the summary text to notified message
-        item["summary"] = summary
-        item["detail"] = detail
+        item["summary"] = record["summary"]
+        item["detail"] = record["detail"]
 
         if destination == "teams":
             item["detail"] = item["detail"].replace("。\n", "。\r")
@@ -438,13 +478,13 @@ def push_notification(item_list, context=None):
         try:
             ddb_table.update_item(
                 Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
-                UpdateExpression="SET summary = :s, detail = :d, summary_status = :st, summary_source = :src, model_id = :m, latency_sec = :l, input_tokens = :it, output_tokens = :ot",
+                UpdateExpression="SET summary = :s, detail = :d, summary_status = :st, summary_source = :src, model_id = :m, latency_sec = :l, input_tokens = :it, output_tokens = :ot REMOVE pending",
                 ConditionExpression="attribute_exists(#url)",
                 ExpressionAttributeNames={"#url": "url"},
                 ExpressionAttributeValues={
-                    ":s": summary, ":d": detail, ":st": "completed", ":src": source,
-                    ":m": metrics["model_id"], ":l": json.dumps(metrics["latency_sec"]),
-                    ":it": metrics["input_tokens"], ":ot": metrics["output_tokens"],
+                    ":s": record["summary"], ":d": record["detail"], ":st": "completed", ":src": record["summary_source"],
+                    ":m": record["model_id"], ":l": record["latency_sec"],
+                    ":it": record["input_tokens"], ":ot": record["output_tokens"],
                 },
             )
         except Exception as e:  # noqa: BLE001 - the article was posted; the summary is informational
@@ -616,6 +656,7 @@ def handler(event, context):
 
     Each invocation first adds 1 to the item's notify_attempts and reads the item back. A record
     whose item is gone or already has a final summary_status (a duplicate delivery) is skipped.
+    A summary saved in the item's pending attribute by an earlier attempt is posted as it is.
 
     A failure a retry may fix is raised, so the event source retries the record (2 times, then
     the record goes to the failure queue). On the last attempt the item also gets
@@ -639,7 +680,7 @@ def handler(event, context):
                 print(f"skip {item['rss_link']}: already {stored['summary_status']}")
                 continue
             attempts = int(stored.get("notify_attempts", 1))
-            push_notification([item], context)
+            push_notification([item], context, stored.get("pending"))
         except Exception as error:  # classify every failure
             if is_retryable(error):
                 if attempts >= MAX_ATTEMPTS:

@@ -342,7 +342,8 @@ class TestJudgeRelevance:
 class TestPushNotificationFilter:
     """Test the optional notifier filter in push_notification."""
 
-    def _push(self, monkeypatch, notifier_filter=None, filter_result="", relevant=None, content="body", description=""):
+    def _push(self, monkeypatch, notifier_filter=None, filter_result="", relevant=None, content="body", description="",
+              pending=None):
         calls = {"ssm": 0, "judge": [], "judged": [], "summarize": 0, "posted": 0, "updates": []}
 
         class _Res:
@@ -387,8 +388,14 @@ class TestPushNotificationFilter:
         monkeypatch.setattr(index.time, "sleep", lambda s: None)
         item = {"rss_title": "T", "rss_link": "https://example.com/a", "rss_time": "t", "rss_category": "c",
                 "rss_notifier_name": "N", "rss_filter_result": filter_result, "rss_description": description}
-        index.push_notification([item])
+        index.push_notification([item], pending=pending)
         return calls
+
+    def test_saved_summary_skips_the_topics_check(self, monkeypatch):
+        pending = {"summary": "s", "detail": "- d", "summary_source": "article", "model_id": "m",
+                   "latency_sec": "1", "input_tokens": 1, "output_tokens": 1}
+        calls = self._push(monkeypatch, notifier_filter={"topics": ["AI"]}, relevant=False, pending=pending)
+        assert calls["judge"] == [] and calls["summarize"] == 0 and calls["posted"] == 1
 
     def test_without_filter_nothing_changes(self, monkeypatch):
         calls = self._push(monkeypatch)
@@ -593,13 +600,18 @@ class TestIsRetryable:
         assert not index.is_retryable(error)
 
 
+# A summary an earlier attempt saved in the item's pending attribute
+_PENDING = {"summary": "saved", "detail": "- saved", "summary_source": "article", "model_id": "m",
+            "latency_sec": "1", "input_tokens": 5, "output_tokens": 6}
+
+
 @pytest.mark.usefixtures("real_error_classes")
 class TestHandlerFailures:
     """The handler re-raises only failures before the post that a retry may fix."""
 
     def _run(self, monkeypatch, summarize_error=None, post_error=None, update_error=None, content="body",
-             remaining_ms=None, stored=None):
-        events, updates = [], []
+             remaining_ms=None, stored=None, pending_error=None):
+        events, updates, saved = [], [], []
         # The item as start_attempt reads it back; None means the item no longer exists
         stored = {"notify_attempts": 1} if stored is None else stored
 
@@ -626,6 +638,13 @@ class TestHandlerFailures:
                     raise _FakeClientError("ConditionalCheckFailedException")
                 return {"Attributes": stored}
             assert kw["ConditionExpression"].startswith("attribute_exists(#url)")
+            if kw["UpdateExpression"] == "SET pending = :p":
+                assert kw["ConditionExpression"] == "attribute_exists(#url) AND attribute_not_exists(summary_status)"
+                events.append("save pending")
+                saved.append(kw["ExpressionAttributeValues"][":p"])
+                if pending_error is not None:
+                    raise pending_error
+                return {}
             status = kw["ExpressionAttributeValues"][":st"]
             events.append(f"write {status}")
             updates.append(kw)
@@ -635,7 +654,7 @@ class TestHandlerFailures:
         table = MagicMock()
         table.update_item.side_effect = fake_update
         monkeypatch.setattr(index, "ddb_table", table)
-        monkeypatch.setattr(index, "get_blog_content", lambda url: content)
+        monkeypatch.setattr(index, "get_blog_content", lambda url: events.append("fetch") or content)
         monkeypatch.setattr(index.article, "description_text", lambda d: d)
 
         def fake_summarize(*a, **k):
@@ -659,6 +678,7 @@ class TestHandlerFailures:
         if remaining_ms is not None:
             context = MagicMock()
             context.get_remaining_time_in_millis.return_value = remaining_ms
+        self.saved = saved
         try:
             index.handler({"Records": [{"eventName": "INSERT", "dynamodb": {"NewImage": image}}]}, context)
         except Exception as error:  # noqa: BLE001
@@ -674,12 +694,12 @@ class TestHandlerFailures:
     def test_success_writes_completed_after_the_post(self, monkeypatch):
         events, _, error = self._run(monkeypatch, remaining_ms=170_000)
         assert error is None
-        assert events == ["summarize", f"post timeout={index.WEBHOOK_TIMEOUT_SEC}", "write completed"]
+        assert events == ["fetch", "summarize", "save pending", f"post timeout={index.WEBHOOK_TIMEOUT_SEC}", "write completed"]
 
     def test_bedrock_throttling_is_retried(self, monkeypatch):
         events, updates, error = self._run(monkeypatch, summarize_error=_FakeClientError("ThrottlingException"))
         assert isinstance(error, _FakeClientError)
-        assert events == ["summarize"] and updates == []
+        assert events == ["fetch", "summarize"] and updates == []
 
     def test_bedrock_timeout_is_retried(self, monkeypatch):
         _, updates, error = self._run(monkeypatch, summarize_error=_FakeBotoHTTPClientError("read timeout"))
@@ -688,12 +708,12 @@ class TestHandlerFailures:
     def test_bedrock_access_denied_is_marked_failed(self, monkeypatch):
         events, updates, error = self._run(monkeypatch, summarize_error=_FakeClientError("AccessDeniedException", 403))
         assert error is None
-        assert events == ["summarize", "write failed"]
+        assert events == ["fetch", "summarize", "write failed"]
         assert "AccessDeniedException" in self._failure(updates)
 
     def test_no_text_is_marked_failed(self, monkeypatch):
         events, updates, error = self._run(monkeypatch, content=None)
-        assert error is None and events == ["write failed"]
+        assert error is None and events == ["fetch", "write failed"]
         assert self._failure(updates) == "no article text and no RSS description"
 
     @pytest.mark.parametrize("code", [429, 500, 503])
@@ -724,12 +744,12 @@ class TestHandlerFailures:
         # A retryable error after a successful post must not make the event source post again
         events, _, error = self._run(monkeypatch, update_error=_FakeClientError("ThrottlingException"))
         assert error is None
-        assert events == ["summarize", f"post timeout={index.WEBHOOK_TIMEOUT_SEC}", "write completed"]
+        assert events == ["fetch", "summarize", "save pending", f"post timeout={index.WEBHOOK_TIMEOUT_SEC}", "write completed"]
 
     def test_too_little_time_left_is_retried_before_the_post(self, monkeypatch):
         events, updates, error = self._run(monkeypatch, remaining_ms=index.MIN_POST_TIME_MS - 1)
         assert isinstance(error, index.RetryableError)
-        assert events == ["summarize"] and updates == []
+        assert events == ["fetch", "summarize", "save pending"] and updates == []
 
     @pytest.mark.parametrize("status", ["completed", "failed", "filtered"])
     def test_a_finished_item_is_not_posted_again(self, monkeypatch, status):
@@ -747,6 +767,35 @@ class TestHandlerFailures:
         assert isinstance(error, urllib.error.HTTPError)
         assert "write completed" not in events
         assert self._failure(updates).startswith("retries exhausted: HTTPError")
+
+    def test_first_attempt_saves_the_summary_before_the_post_and_removes_it_after(self, monkeypatch):
+        events, updates, error = self._run(monkeypatch)
+        assert error is None
+        assert events.index("save pending") < events.index(f"post timeout={index.WEBHOOK_TIMEOUT_SEC}")
+        assert self.saved[0]["summary"] == "sum" and self.saved[0]["latency_sec"] == "1"
+        assert updates[-1]["UpdateExpression"].endswith(" REMOVE pending")
+
+    def test_retry_posts_the_saved_summary_without_fetching_or_summarizing(self, monkeypatch):
+        events, updates, error = self._run(monkeypatch, stored={"notify_attempts": 2, "pending": _PENDING})
+        assert error is None
+        assert events == [f"post timeout={index.WEBHOOK_TIMEOUT_SEC}", "write completed"]
+        values = updates[-1]["ExpressionAttributeValues"]
+        assert values[":s"] == "saved" and values[":d"] == "- saved" and values[":it"] == 5
+
+    def test_retry_with_the_saved_summary_still_fails_on_the_last_attempt(self, monkeypatch):
+        events, updates, error = self._run(monkeypatch, post_error=_http_error(503),
+                                           stored={"notify_attempts": index.MAX_ATTEMPTS, "pending": _PENDING})
+        assert isinstance(error, urllib.error.HTTPError)
+        assert "summarize" not in events and self._failure(updates).startswith("retries exhausted")
+
+    def test_an_incomplete_pending_summary_is_ignored(self, monkeypatch):
+        events, _, error = self._run(monkeypatch, stored={"notify_attempts": 2, "pending": {"summary": "x"}})
+        assert error is None and "summarize" in events
+
+    def test_a_failed_save_does_not_stop_the_post(self, monkeypatch):
+        events, _, error = self._run(monkeypatch, pending_error=_FakeClientError("ThrottlingException"))
+        assert error is None
+        assert events == ["fetch", "summarize", "save pending", f"post timeout={index.WEBHOOK_TIMEOUT_SEC}", "write completed"]
 
     def test_an_earlier_attempt_does_not_mark_failed(self, monkeypatch):
         _, updates, error = self._run(monkeypatch, post_error=_http_error(503),
