@@ -64,7 +64,7 @@ You can also:
 
 ### 4. Update Existing Tenant
 
-Click **🔄 Update** on a stack row. The modal pre-fills with the current configuration reconstructed from Lambda environment variables, and the alarm notifications read from the stack's CloudFormation template. Edit any field and deploy. Clearing the alarm notifications and deploying removes them.
+Click **🔄 Update** on a stack row. The modal pre-fills with the current configuration reconstructed from Lambda environment variables, and the alarm notifications and the log format (`lambdaLogFormat`) read from the stack's CloudFormation template. Edit any field and deploy. Clearing the alarm notifications and deploying removes them.
 
 ### 5. Destroy Tenant
 

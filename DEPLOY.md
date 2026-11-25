@@ -137,6 +137,7 @@ Settings are managed in `cdk.json` under `context`.
 |---|---|
 | `modelRegion` | Source region for Bedrock API calls (default: `us-east-1`) |
 | `modelIds` | Array of model IDs tried in order (fallback pool) |
+| `lambdaLogFormat` | Optional. `JSON` writes both functions' logs as JSON; `TEXT` or no value keeps plain text (see [Lambda logs](#lambda-logs)) |
 
 ### summarizers
 | Key | Description |
@@ -222,6 +223,8 @@ aws logs describe-log-groups --log-group-name-prefix WhatsNewSummaryNotifier --q
 ```
 
 For 14 days after an update from an earlier version, older events are still in `/aws/lambda/<stack name>-NotifyNewEntry...` and `/aws/lambda/<stack name>-newsCrawler...`. Select both log groups in Logs Insights to search across the update.
+
+Set `"lambdaLogFormat": "JSON"` in `cdk.json` or a tenant config file to get the logs as JSON. Each application log line then has `timestamp`, `level`, `message` and `requestId` (and `errorType` and `stackTrace` for an exception), so you can search them in Logs Insights, for example `filter level = "ERROR"`, and Lambda's application and system log levels apply (both `INFO`) ([JSON and plain text log formats](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-cloudwatchlogs-logformat.html)). The metric lines and the crawler's line with the whole feed stay as they are. JSON lines are larger, so the logs take a little more storage. Changing the format does not change logs that were already written.
 
 ### Metrics
 For every stream record it processes, the notify Lambda writes one log line in the CloudWatch embedded metric format (EMF). CloudWatch turns it into six metrics in the `WhatsNewSummaryNotifier` namespace, with one dimension, `FunctionName` (the notify Lambda's name, so every stack has its own). Each is 0 or 1 per record:

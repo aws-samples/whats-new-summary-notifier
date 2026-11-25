@@ -136,6 +136,7 @@ cdk deploy
 |---|---|
 | `modelRegion` | Bedrock API 呼び出しのソースリージョン（デフォルト: `us-east-1`） |
 | `modelIds` | フォールバック順に試行されるモデル ID の配列 |
+| `lambdaLogFormat` | 任意。`JSON` で両方の関数のログを JSON にします。`TEXT` または未設定ならテキストのままです（[Lambda のログ](#lambda-のログ)） |
 
 ### summarizers
 | キー | 説明 |
@@ -221,6 +222,8 @@ aws logs describe-log-groups --log-group-name-prefix WhatsNewSummaryNotifier --q
 ```
 
 以前のバージョンから更新して 14 日の間は、それより前のイベントが `/aws/lambda/<スタック名>-NotifyNewEntry...` と `/aws/lambda/<スタック名>-newsCrawler...` に残っています。更新の前後をまとめて調べるときは、Logs Insights で両方のロググループを選んでください。
+
+`cdk.json` かテナントの設定ファイルに `"lambdaLogFormat": "JSON"` を書くと、ログが JSON になります。アプリのログの各行に `timestamp`、`level`、`message`、`requestId`（例外なら `errorType` と `stackTrace` も）が入るので、Logs Insights で `filter level = "ERROR"` のように検索でき、Lambda のアプリケーションとシステムのログレベル（どちらも `INFO`）が効きます（[JSON とテキストのログ形式](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-cloudwatchlogs-logformat.html)）。メトリクスの行と、クローラーのフィード全体の行は変わりません。JSON の行は長くなるので、ログの保存量は少し増えます。形式を変えても、すでに書かれたログは変わりません。
 
 ### メトリクス
 通知 Lambda は、処理したストリームの記録ごとに、CloudWatch の埋め込みメトリクス形式（EMF）のログを 1 行書きます。CloudWatch はそこから `WhatsNewSummaryNotifier` 名前空間の 6 つのメトリクスを作ります。次元は `FunctionName`（通知 Lambda の名前。スタックごとに別になります）の 1 つだけです。どれも記録ごとに 0 か 1 です。

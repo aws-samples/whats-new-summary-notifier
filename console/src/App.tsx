@@ -8,6 +8,7 @@ type Stack = {
   tags: { Key: string; Value: string }[];
   envVars: Record<string, string>;
   alarms?: AlarmSettings;
+  lambdaLogFormat?: string;
 };
 // The stack's optional `alarms` setting (see DEPLOY.md, "Alarm notifications")
 type AlarmSettings = { email?: string; topicArn?: string; noNewEntriesDays?: number };
@@ -72,6 +73,8 @@ export function App() {
     notifiers: Record<string, NotifierConfig>;
     summarizers: Record<string, SummarizerConfig>;
     alarms: AlarmSettings;
+    // Not shown in the form: kept so that switching between the form and JSON keeps it
+    lambdaLogFormat?: string;
   }>({ modelRegion: '', modelIds: [], notifiers: {}, summarizers: {}, alarms: {} });
   const [destroyConfirm, setDestroyConfirm] = useState('');
   const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null);
@@ -164,6 +167,7 @@ export function App() {
     else if (env['MODEL_ID']) config.modelIds = [env['MODEL_ID']];
     if (summarizers) config.summarizers = summarizers;
     if (notifiers) config.notifiers = notifiers;
+    if (stack.lambdaLogFormat) config.lambdaLogFormat = stack.lambdaLogFormat;
     if (!notifiers && env['APP']) {
       config.notifiers = {
         default: { destination: env['APP'], summarizerName: 'default', webhookUrlParameterName: env['SSM_APP_URL_NAME'] ?? '/WhatsNew/URL', rssUrl: { "What's new": 'https://aws.amazon.com/about-aws/whats-new/recent/feed/' } },
@@ -188,6 +192,7 @@ export function App() {
     if (Object.keys(g.summarizers).length) obj.summarizers = g.summarizers;
     const alarms = Object.fromEntries(Object.entries(g.alarms).filter(([, v]) => v));
     if (Object.keys(alarms).length) obj.alarms = alarms;
+    if (g.lambdaLogFormat) obj.lambdaLogFormat = g.lambdaLogFormat;
     return JSON.stringify(obj, null, 2);
   };
 
@@ -200,6 +205,7 @@ export function App() {
         notifiers: p.notifiers ?? {},
         summarizers: p.summarizers ?? {},
         alarms: p.alarms && typeof p.alarms === 'object' ? p.alarms : {},
+        lambdaLogFormat: typeof p.lambdaLogFormat === 'string' ? p.lambdaLogFormat : undefined,
       });
       setConfigError('');
     } catch { setConfigError('Invalid JSON'); }
@@ -261,6 +267,8 @@ export function App() {
       }
       // Keep the alarm notifications the stack was deployed with: an update without them removes them
       if (stack.alarms && Object.keys(stack.alarms).length) config.alarms = stack.alarms;
+      // Keep the JSON log format too: an update without lambdaLogFormat goes back to text
+      if (stack.lambdaLogFormat) config.lambdaLogFormat = stack.lambdaLogFormat;
       const json = JSON.stringify(config, null, 2);
       setConfigJson(json);
       jsonToGui(json);

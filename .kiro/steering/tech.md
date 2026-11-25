@@ -7,7 +7,7 @@
 
 ## Lambda ランタイム
 - Python 3.15（Lambda）/ Python 3.15（CodeBuild）
-- ログは Python 標準の `logging`（ルートロガー。`AWS_LAMBDA_LOG_LEVEL` がないときは INFO にする）。EMF の行、`Model metrics:` / `Relevance metrics:` の行、クローラーのフィード全体の行は print のまま
+- ログは Python 標準の `logging`（ルートロガー。`AWS_LAMBDA_LOG_LEVEL` がないときは INFO にする）。cdk.json の任意の `lambdaLogFormat`（`TEXT` / `JSON`）で両関数のログ形式を選ぶ。未設定ならテキスト（Lambda の既定）。Console の更新はテンプレートの LoggingConfig から読み戻す。EMF の行、`Model metrics:` / `Relevance metrics:` の行、クローラーのフィード全体の行は print のまま
 - 依存管理: 各 Lambda ディレクトリの `requirements.txt`
 
 ## 主要 AWS サービス

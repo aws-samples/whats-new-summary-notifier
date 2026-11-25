@@ -4,7 +4,7 @@ import { Table, AttributeType, BillingMode, StreamViewType } from 'aws-cdk-lib/a
 import { Rule, Schedule, RuleTargetInput, CronOptions } from 'aws-cdk-lib/aws-events';
 import { LambdaFunction } from 'aws-cdk-lib/aws-events-targets';
 import { Role, Policy, ServicePrincipal, PolicyStatement, Effect } from 'aws-cdk-lib/aws-iam';
-import { Runtime, StartingPosition, FilterCriteria, FilterRule } from 'aws-cdk-lib/aws-lambda';
+import { Runtime, StartingPosition, FilterCriteria, FilterRule, LoggingFormat } from 'aws-cdk-lib/aws-lambda';
 import { DynamoEventSource, SqsDlq } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Queue, QueueEncryption } from 'aws-cdk-lib/aws-sqs';
 import { Alarm, CfnAlarm, ComparisonOperator, Metric, TreatMissingData } from 'aws-cdk-lib/aws-cloudwatch';
@@ -80,6 +80,17 @@ const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
  * `-c alarms='{...}'` on the cdk command line passes the value as a string, so a JSON
  * string is accepted as well as an object.
  */
+/**
+ * The optional `lambdaLogFormat` setting: "TEXT" or "JSON" for both functions. Without it the
+ * functions keep Lambda's default (plain text) and the template has no LogFormat.
+ */
+export function parseLambdaLogFormat(value: unknown): LoggingFormat | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (value === 'TEXT') return LoggingFormat.TEXT;
+  if (value === 'JSON') return LoggingFormat.JSON;
+  throw new Error('lambdaLogFormat must be "TEXT" or "JSON"');
+}
+
 export function parseAlarmSettings(value: unknown, region: string): AlarmSettings | undefined {
   if (value === undefined || value === null) return undefined;
   let settings = value;
@@ -139,6 +150,7 @@ export class WhatsNewSummaryNotifierStack extends Stack {
     const notifiers = this.node.tryGetContext('notifiers');
     const summarizers: [] = this.node.tryGetContext('summarizers');
     const alarmSettings = parseAlarmSettings(this.node.tryGetContext('alarms'), region);
+    const loggingFormat = parseLambdaLogFormat(this.node.tryGetContext('lambdaLogFormat'));
 
     // Role for Lambda Function to post new entries written to DynamoDB to Slack or Microsoft Teams
     const notifyNewEntryRole = new Role(this, 'NotifyNewEntryRole', {
@@ -218,6 +230,7 @@ export class WhatsNewSummaryNotifierStack extends Stack {
       index: 'index.py',
       timeout: Duration.seconds(180),
       logGroup: newLogGroup('NotifyNewEntryLogGroup'),
+      loggingFormat,
       role: notifyNewEntryRole,
       reservedConcurrentExecutions: 1,
       environment: notifyEnvironment,
@@ -320,6 +333,7 @@ export class WhatsNewSummaryNotifierStack extends Stack {
       index: 'index.py',
       timeout: Duration.seconds(60),
       logGroup: newLogGroup('NewsCrawlerLogGroup'),
+      loggingFormat,
       role: newsCrawlerRole,
       environment: crawlerEnvironment,
     });

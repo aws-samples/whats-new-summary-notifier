@@ -52,6 +52,7 @@ import {
 import { execSync } from 'child_process';
 import { CODEBUILD_IMAGE, ensureCodeBuildProject as ensureProject } from './codebuild';
 import { alarmsFromTemplate, type AlarmSettings } from './alarms';
+import { lambdaLogFormatFromTemplate } from './log-format';
 
 const API_PORT = 3456;
 const UI_PORT = 5173;
@@ -188,9 +189,11 @@ app.get('/api/stacks', async (req, res) => {
           } catch { /* ignore */ }
 
           let alarms: AlarmSettings = {};
+          let lambdaLogFormat: string | undefined;
           try {
             const { TemplateBody } = await cf.send(new GetTemplateCommand({ StackName: s.StackName }));
             alarms = alarmsFromTemplate(TemplateBody);
+            lambdaLogFormat = lambdaLogFormatFromTemplate(TemplateBody);
           } catch { /* ignore */ }
 
           const tenant =
@@ -210,6 +213,7 @@ app.get('/api/stacks', async (req, res) => {
             tags: stack?.Tags ?? [],
             envVars,
             alarms,
+            lambdaLogFormat,
           });
         }
       } catch { /* skip */ }
