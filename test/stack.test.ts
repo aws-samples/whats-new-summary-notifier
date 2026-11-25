@@ -1,6 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
-import { WhatsNewSummaryNotifierStack } from '../lib/whats-new-summary-notifier-stack';
+import { WhatsNewSummaryNotifierStack, parseAlarmSettings } from '../lib/whats-new-summary-notifier-stack';
 
 function createStack(contextOverrides: Record<string, unknown> = {}): Template {
   const app = new cdk.App({
@@ -229,8 +229,117 @@ describe('WhatsNewSummaryNotifierStack', () => {
       ComparisonOperator: 'GreaterThanOrEqualToThreshold',
     });
     for (const alarm of Object.values(template.findResources('AWS::CloudWatch::Alarm'))) {
-      expect((alarm as { Properties: Record<string, unknown> }).Properties.AlarmActions).toBeUndefined();
+      const props = (alarm as { Properties: Record<string, unknown> }).Properties;
+      expect(props.AlarmActions).toBeUndefined();
+      expect(props.OKActions).toBeUndefined();
+      expect(props.InsufficientDataActions).toBeUndefined();
     }
+    template.resourceCountIs('AWS::SNS::Topic', 0);
+    template.resourceCountIs('AWS::SNS::Subscription', 0);
+  });
+
+  describe('alarm notifications', () => {
+    const topicArn = 'arn:aws:sns:us-east-1:123456789012:wnsn-alarms';
+    const alarmProps = (template: Template) =>
+      Object.values(template.findResources('AWS::CloudWatch::Alarm')).map(
+        (a) => (a as { Properties: Record<string, unknown> }).Properties
+      );
+
+    test('alarms.topicArn adds ALARM and OK actions to every alarm and creates no topic', () => {
+      const template = createStack({ alarms: { topicArn } });
+      template.resourceCountIs('AWS::SNS::Topic', 0);
+      const props = alarmProps(template);
+      expect(props.length).toBeGreaterThan(0);
+      for (const p of props) {
+        expect(p.AlarmActions).toEqual([topicArn]);
+        expect(p.OKActions).toEqual([topicArn]);
+      }
+    });
+
+    test('alarms.email creates a TLS-only topic that only this account\'s alarms can publish to', () => {
+      const template = createStack({ alarms: { email: 'ops@example.com' } });
+      template.resourceCountIs('AWS::SNS::Topic', 1);
+      const topicId = Object.keys(template.findResources('AWS::SNS::Topic'))[0];
+      expect(template.findResources('AWS::SNS::Topic')[topicId].Properties?.KmsMasterKeyId).toBeUndefined();
+      template.hasResourceProperties('AWS::SNS::Subscription', {
+        Protocol: 'email',
+        Endpoint: 'ops@example.com',
+        TopicArn: { Ref: topicId },
+      });
+      template.hasResourceProperties('AWS::SNS::TopicPolicy', {
+        PolicyDocument: {
+          Statement: Match.arrayWith([
+            Match.objectLike({
+              Effect: 'Deny',
+              Action: 'sns:Publish',
+              Condition: { Bool: { 'aws:SecureTransport': 'false' } },
+            }),
+            Match.objectLike({
+              Effect: 'Allow',
+              Principal: { Service: 'cloudwatch.amazonaws.com' },
+              Action: 'sns:Publish',
+              Condition: {
+                StringEquals: { 'aws:SourceAccount': Match.anyValue() },
+                ArnLike: { 'aws:SourceArn': Match.anyValue() },
+              },
+            }),
+          ]),
+        },
+      });
+      for (const p of alarmProps(template)) {
+        expect(p.AlarmActions).toEqual([{ Ref: topicId }]);
+        expect(p.OKActions).toEqual([{ Ref: topicId }]);
+      }
+    });
+
+    test('a JSON string from -c alarms=... is accepted', () => {
+      const template = createStack({ alarms: JSON.stringify({ topicArn }) });
+      for (const p of alarmProps(template)) expect(p.AlarmActions).toEqual([topicArn]);
+    });
+
+    test.each([
+      [{ topicArn, email: 'ops@example.com' }, /cannot both be set/],
+      [{ topicArn: 'arn:aws:sqs:us-east-1:123456789012:q' }, /ARN of an SNS standard topic/],
+      [{ topicArn: `${topicArn}.fifo` }, /ARN of an SNS standard topic/],
+      [{ email: 'not-an-address' }, /must be an email address/],
+      [{ emails: 'ops@example.com' }, /alarms.emails is not a known setting/],
+      [['ops@example.com'], /must be an object/],
+      ['{not json', /must be a JSON object/],
+    ])('rejects alarms=%j', (alarms, message) => {
+      expect(() => createStack({ alarms })).toThrow(message);
+    });
+
+    test('rejects a topic in another Region when the stack Region is known', () => {
+      expect(() => parseAlarmSettings({ topicArn: 'arn:aws:sns:eu-west-1:123456789012:t' }, 'us-east-1')).toThrow(
+        /use a topic in the stack's Region \(us-east-1\)/
+      );
+      expect(parseAlarmSettings({ topicArn }, 'us-east-1')).toEqual({ topicArn });
+      expect(parseAlarmSettings(undefined, 'us-east-1')).toBeUndefined();
+    });
+  });
+
+  test('each function writes to its own stack-owned log group kept for 14 days', () => {
+    const template = createStack();
+    // No LogRetention custom resource and no provider function for it
+    template.resourceCountIs('Custom::LogRetention', 0);
+    template.resourceCountIs('AWS::Lambda::Function', 2);
+    const logGroups = template.findResources('AWS::Logs::LogGroup');
+    expect(Object.keys(logGroups)).toHaveLength(2);
+    for (const lg of Object.values(logGroups) as {
+      Properties: Record<string, unknown>;
+      DeletionPolicy?: string;
+      UpdateReplacePolicy?: string;
+    }[]) {
+      expect(lg.Properties.RetentionInDays).toBe(14);
+      // CloudFormation names it, so it never collides with /aws/lambda/<function name>
+      expect(lg.Properties.LogGroupName).toBeUndefined();
+      expect(lg.DeletionPolicy).toBe('RetainExceptOnCreate');
+      expect(lg.UpdateReplacePolicy).toBe('Retain');
+    }
+    const targets = Object.values(template.findResources('AWS::Lambda::Function')).map(
+      (f) => (f as { Properties: { LoggingConfig?: { LogGroup?: { Ref?: string } } } }).Properties.LoggingConfig?.LogGroup?.Ref
+    );
+    expect(targets.sort()).toEqual(Object.keys(logGroups).sort());
   });
 
   test('multiple notifiers create multiple EventBridge rules', () => {
