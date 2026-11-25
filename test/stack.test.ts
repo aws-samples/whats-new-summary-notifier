@@ -211,9 +211,20 @@ describe('WhatsNewSummaryNotifierStack', () => {
     expect(sendStatements[0].resource).toEqual({ 'Fn::GetAtt': [queueId, 'Arn'] });
   });
 
-  test('alarms on IteratorAge and the failure queue, without actions', () => {
+  test('alarms on IteratorAge, the failure queue and dropped crawls, without actions', () => {
     const template = createStack();
-    template.resourceCountIs('AWS::CloudWatch::Alarm', 2);
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 3);
+    template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      MetricName: 'AsyncEventsDropped',
+      Namespace: 'AWS/Lambda',
+      Dimensions: [{ Name: 'FunctionName', Value: { Ref: Match.stringLikeRegexp('^newsCrawler') } }],
+      Statistic: 'Sum',
+      Period: 3600,
+      Threshold: 1,
+      EvaluationPeriods: 1,
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+      TreatMissingData: 'notBreaching',
+    });
     template.hasResourceProperties('AWS::CloudWatch::Alarm', {
       MetricName: 'IteratorAge',
       Namespace: 'AWS/Lambda',
@@ -315,6 +326,36 @@ describe('WhatsNewSummaryNotifierStack', () => {
       );
       expect(parseAlarmSettings({ topicArn }, 'us-east-1')).toEqual({ topicArn });
       expect(parseAlarmSettings(undefined, 'us-east-1')).toBeUndefined();
+    });
+
+    test('alarms.noNewEntriesDays adds a daily no-new-article alarm with a warm-up', () => {
+      const none = createStack();
+      expect(JSON.stringify(none.findResources('AWS::CloudWatch::Alarm'))).not.toContain('"Invocations"');
+      const template = createStack({ alarms: { noNewEntriesDays: 3 } });
+      template.resourceCountIs('AWS::CloudWatch::Alarm', 4);
+      template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+        MetricName: 'Invocations',
+        Namespace: 'AWS/Lambda',
+        Dimensions: [{ Name: 'FunctionName', Value: { Ref: Match.stringLikeRegexp('^NotifyNewEntry') } }],
+        Statistic: 'Sum',
+        Period: 86400,
+        EvaluationPeriods: 3,
+        DatapointsToAlarm: 3,
+        Threshold: 1,
+        ComparisonOperator: 'LessThanThreshold',
+        TreatMissingData: 'breaching',
+        WarmUpConfiguration: { WarmUpPeriodDurationInMinutes: 2880 },
+      });
+      // Without a topic or email the new alarm has no actions either
+      for (const p of alarmProps(template)) expect(p.AlarmActions).toBeUndefined();
+      // With a topic, it gets the actions like the others
+      for (const p of alarmProps(createStack({ alarms: { topicArn, noNewEntriesDays: 7 } }))) {
+        expect(p.AlarmActions).toEqual([topicArn]);
+      }
+    });
+
+    test.each([0, 8, 2.5, '3'])('rejects alarms.noNewEntriesDays=%j', (days) => {
+      expect(() => createStack({ alarms: { noNewEntriesDays: days } })).toThrow(/whole number of days from 1 to 7/);
     });
   });
 
