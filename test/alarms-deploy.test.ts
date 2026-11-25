@@ -1,6 +1,8 @@
 import * as cdk from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
 import { spawnSync } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { WhatsNewSummaryNotifierStack } from '../lib/whats-new-summary-notifier-stack';
 import { alarmsFromTemplate } from '../console/server/alarms';
@@ -45,12 +47,21 @@ describe('Console reads the alarms setting back from the deployed template', () 
 });
 
 describe('deploy.sh alarm options', () => {
+  // A stub `aws` that exits 99: an input that passes the checks stops at `aws sts`, never creates anything
+  const stubBin = fs.mkdtempSync(path.join(os.tmpdir(), 'wnsn-aws-stub-'));
+  fs.writeFileSync(path.join(stubBin, 'aws'), '#!/bin/sh\nexit 99\n', { mode: 0o755 });
+  afterAll(() => fs.rmSync(stubBin, { recursive: true, force: true }));
+
   const run = (...args: string[]) =>
     spawnSync('bash', [path.join(__dirname, '..', 'deploy.sh'), '--non-interactive', ...args], {
       encoding: 'utf-8',
-      // No AWS credentials: a check that passes would fail later at `aws sts`, never create anything
-      env: { PATH: process.env.PATH ?? '', AWS_CONFIG_FILE: '/nonexistent', AWS_SHARED_CREDENTIALS_FILE: '/nonexistent' },
+      env: {
+        PATH: `${stubBin}:${process.env.PATH ?? ''}`,
+        AWS_CONFIG_FILE: '/nonexistent',
+        AWS_SHARED_CREDENTIALS_FILE: '/nonexistent',
+      },
     });
+  const topicArn = (name: string) => `arn:aws:sns:us-east-1:123456789012:${name}`;
 
   test.each([
     [['--alarm-email', 'ops@example.com', '--alarm-topic-arn', 'arn:aws:sns:us-east-1:123456789012:t'], /not both/],
@@ -58,11 +69,19 @@ describe('deploy.sh alarm options', () => {
     [['--alarm-email', "o'p@example.com"], /Not an email address/],
     [['--alarm-topic-arn', 'arn:aws:sqs:us-east-1:123456789012:q'], /Not the ARN of an SNS standard topic/],
     [['--alarm-topic-arn', 'arn:aws:sns:us-east-1:123456789012:t.fifo'], /Not the ARN of an SNS standard topic/],
+    [['--alarm-topic-arn', topicArn('t'.repeat(257))], /Not the ARN of an SNS standard topic/],
     [['--no-new-entries-days', '8'], /whole number from 1 to 7/],
     [['--no-new-entries-days', '1; true'], /whole number from 1 to 7/],
   ])('stops before any AWS call for %j', (args, message) => {
     const r = run(...args);
     expect(r.status).toBe(1);
     expect(r.stdout).toMatch(message);
+  });
+
+  // The name length is checked outside the regex: macOS regex rejects repetition counts over 255
+  test.each([topicArn('ops-alarms_1'), topicArn('t'.repeat(256))])('accepts the topic ARN %s', (arn) => {
+    const r = run('--alarm-topic-arn', arn);
+    expect(r.stdout).not.toMatch(/Not the ARN/);
+    expect(r.status).toBe(99);
   });
 });
