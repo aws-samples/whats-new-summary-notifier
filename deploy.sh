@@ -161,7 +161,10 @@ fi
 if [[ -n "$ALARM_EMAIL" && ! "$ALARM_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
   echo "Not an email address: $ALARM_EMAIL"; exit 1
 fi
-if [[ -n "$ALARM_TOPIC_ARN" && ! "$ALARM_TOPIC_ARN" =~ ^arn:aws[a-z-]*:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]{1,256}$ ]]; then
+# No {1,256} in the pattern: macOS regex allows at most 255 repetitions, so bash 3.2 there
+# rejects every ARN. The topic name length (1-256) is checked separately.
+ALARM_TOPIC_NAME="${ALARM_TOPIC_ARN##*:}"
+if [[ -n "$ALARM_TOPIC_ARN" ]] && { [[ ! "$ALARM_TOPIC_ARN" =~ ^arn:aws[a-z-]*:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$ ]] || (( ${#ALARM_TOPIC_NAME} > 256 )); }; then
   echo "Not the ARN of an SNS standard topic: $ALARM_TOPIC_ARN"; exit 1
 fi
 if [[ -n "$NO_NEW_ENTRIES_DAYS" && ! "$NO_NEW_ENTRIES_DAYS" =~ ^[1-7]$ ]]; then
