@@ -44,6 +44,7 @@ bash deploy.sh --non-interactive \
   --webhook-url "https://hooks.slack.com/..." \
   --destination slack \
   --language japanese
+  # optional: --alarm-email ops@example.com  (see "Alarm notifications")
 ```
 
 ## Multi-Tenant Deployment
@@ -205,7 +206,7 @@ Without `alarms`, the stack's CloudWatch alarms have no actions and nobody is to
 | `email` | The stack creates an SNS topic and an email subscription to it. The topic only accepts requests over TLS and only lets CloudWatch alarms of this account publish to it. It is not encrypted at rest: CloudWatch alarms cannot publish to a topic encrypted with the AWS managed key `alias/aws/sns`, and the notifications carry alarm names, states and thresholds only |
 | `topicArn` | An existing SNS standard topic in the stack's Region (for example one that forwards to Slack with Amazon Q Developer in chat applications). The stack only adds it to the alarms' actions and does not change the topic or its policy, so the topic policy must let `cloudwatch.amazonaws.com` publish. Use this for a topic encrypted with a customer managed key; the key policy must also let `cloudwatch.amazonaws.com` use `kms:Decrypt` and `kms:GenerateDataKey*` |
 
-Set one of the two, not both. `cdk synth` stops with a message when the value has the wrong shape or the topic is in another Region. `alarms` takes effect when you run `cdk deploy` yourself; `deploy.sh` and the Management Console do not pass it.
+Set one of the two, not both. `cdk synth` stops with a message when the value has the wrong shape or the topic is in another Region. With `deploy.sh`, pass `--alarm-email <address>` or `--alarm-topic-arn <ARN>` (the interactive wizard also asks for an email); the script sends it to the build as `alarms`. Pass the same option on every update: an update without it removes the notifications. The Management Console has an "Alarm notifications" section in the GUI editor, and an update pre-fills it with the setting the stack was deployed with.
 
 - **Confirm the subscription.** After the deploy, SNS sends a confirmation email to the address. Nothing is delivered until someone clicks the link in it (check the spam folder). SNS deletes a subscription that is not confirmed within 48 hours. Deploying again with the same address does not send a new confirmation email, because the stack's subscription resource has not changed: change `email` to another value (or remove it) and deploy, then set it back and deploy again, or subscribe the address again in the SNS console (that subscription is then outside the stack).
 - **Test it.** After confirming, `aws cloudwatch set-alarm-state --alarm-name <alarm name> --state-value ALARM --state-reason test` sends one notification; the alarm returns to its real state at the next evaluation.

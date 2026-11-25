@@ -13,7 +13,8 @@ set -euo pipefail
 #       --webhook-url "https://hooks.slack.com/..." \
 #       --destination slack \
 #       --language japanese \
-#       --tenant test
+#       --tenant test \
+#       --alarm-email ops@example.com
 #
 #   Destroy:
 #     bash deploy.sh --destroy [--tenant test]
@@ -32,6 +33,8 @@ SSM_PARAM_NAME=""
 DESTROY=false
 NON_INTERACTIVE=false
 CONFIG_FILE=""
+ALARM_EMAIL=""
+ALARM_TOPIC_ARN=""
 
 #-----------------------------------------------------------------------------
 # Parse CLI arguments
@@ -44,6 +47,8 @@ while [[ $# -gt 0 ]]; do
     --webhook-url)    WEBHOOK_URL="$2"; shift 2 ;;
     --ssm-param)      SSM_PARAM_NAME="$2"; shift 2 ;;
     --config)         CONFIG_FILE="$2"; shift 2 ;;
+    --alarm-email)    ALARM_EMAIL="$2"; shift 2 ;;
+    --alarm-topic-arn) ALARM_TOPIC_ARN="$2"; shift 2 ;;
     --destroy)        DESTROY=true; shift ;;
     --non-interactive) NON_INTERACTIVE=true; shift ;;
     -h|--help)        usage; exit 0 ;;
@@ -63,6 +68,11 @@ Options:
   --webhook-url URL     Webhook URL for notifications
   --ssm-param NAME      SSM Parameter Store name (default: auto-generated)
   --config FILE         Tenant config JSON file (e.g., tenants/test.json)
+  --alarm-email ADDR    Email the stack's alarms (ALARM and OK) to this address;
+                        confirm the subscription email SNS sends after the deploy
+  --alarm-topic-arn ARN Send the stack's alarms to this existing SNS topic instead
+                        Pass the same alarm option on every update: a deploy
+                        without it removes the alarm notifications
   --destroy             Destroy the stack instead of deploying
   --non-interactive     Skip interactive prompts
   -h, --help            Show this help
@@ -133,6 +143,22 @@ if [[ "$NON_INTERACTIVE" == false && "$DESTROY" == false ]]; then
 
   echo ""
   ask_required "Webhook URL" WEBHOOK_URL
+
+  if [[ -z "$ALARM_TOPIC_ARN" ]]; then
+    echo ""
+    ask "Email for alarm notifications (optional, Enter to skip)" "" ALARM_EMAIL
+  fi
+fi
+
+# Checked here so a typo stops before anything is created. The stack checks again at synth.
+if [[ -n "$ALARM_EMAIL" && -n "$ALARM_TOPIC_ARN" ]]; then
+  echo "Use either --alarm-email or --alarm-topic-arn, not both"; exit 1
+fi
+if [[ -n "$ALARM_EMAIL" && ! "$ALARM_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+  echo "Not an email address: $ALARM_EMAIL"; exit 1
+fi
+if [[ -n "$ALARM_TOPIC_ARN" && ! "$ALARM_TOPIC_ARN" =~ ^arn:aws[a-z-]*:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]{1,256}$ ]]; then
+  echo "Not the ARN of an SNS standard topic: $ALARM_TOPIC_ARN"; exit 1
 fi
 
 case "$DESTINATION" in
@@ -373,11 +399,14 @@ NOTIFIERS_JSON=$(cat <<EOJSON
 EOJSON
 )
 
-CDK_CONTEXT_JSON=$(python3 -c "
-import json
+CDK_CONTEXT_JSON=$(ALARM_EMAIL="$ALARM_EMAIL" ALARM_TOPIC_ARN="$ALARM_TOPIC_ARN" python3 -c "
+import json, os
 ctx = {
     'notifiers': json.loads('''$NOTIFIERS_JSON''')
 }
+alarms = {k: v for k, v in (('email', os.environ['ALARM_EMAIL']), ('topicArn', os.environ['ALARM_TOPIC_ARN'])) if v}
+if alarms:
+    ctx['alarms'] = alarms
 print(json.dumps(ctx))
 ")
 
@@ -399,6 +428,7 @@ echo "  Stack:       $STACK_NAME"
 echo "  Destination: $DESTINATION"
 echo "  Language:    $LANGUAGE"
 echo "  SSM Param:   $SSM_PARAM_NAME"
+echo "  Alarms:      ${ALARM_EMAIL:-${ALARM_TOPIC_ARN:-(no notifications)}}"
 echo ""
 
 BUILD_ID=$(aws codebuild start-build \

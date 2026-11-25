@@ -54,6 +54,7 @@ The **🛠️ GUI Editor** tab provides structured forms for:
 | 🤖 Model Configuration | Model Region (dropdown), Model IDs (with Bedrock + CRIS model suggestions) |
 | 📝 Summarizers | Name, output language, persona (define before Notifiers) |
 | 🔔 Notifiers | Name, destination (Slack/Teams/Google Chat (preview)), summarizer (dropdown from defined summarizers), SSM param name (dropdown of existing + manual input), RSS URLs. An optional `filter` is shown read-only; edit it in the JSON tab |
+| 🚨 Alarm notifications | Optional email, or the ARN of an existing SNS topic, for the stack's alarms (`alarms`; see [Alarm notifications](DEPLOY.md#alarm-notifications-optional)) |
 
 The **📝 JSON** tab allows direct editing of the configuration JSON. Changes sync bidirectionally between tabs.
 
@@ -63,7 +64,7 @@ You can also:
 
 ### 4. Update Existing Tenant
 
-Click **🔄 Update** on a stack row. The modal pre-fills with the current configuration reconstructed from Lambda environment variables. Edit any field and deploy.
+Click **🔄 Update** on a stack row. The modal pre-fills with the current configuration reconstructed from Lambda environment variables, and the alarm notifications read from the stack's CloudFormation template. Edit any field and deploy. Clearing the alarm notifications and deploying removes them.
 
 ### 5. Destroy Tenant
 

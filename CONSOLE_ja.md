@@ -52,6 +52,7 @@ npm run dev:console
 | 🤖 Model Configuration | Model Region（ドロップダウン）、Model IDs（Bedrock + CRIS モデルのサジェスト付き） |
 | 📝 Summarizers | 名前、出力言語、ペルソナ（Notifiers より先に定義） |
 | 🔔 Notifiers | 名前、通知先（Slack/Teams/Google Chat（preview））、Summarizer（定義済み Summarizer のドロップダウン）、SSM パラメータ名（既存のドロップダウン + 手入力）、RSS URL。オプションの `filter` は読み取りだけで表示（JSON タブで編集） |
+| 🚨 Alarm notifications | スタックのアラームの通知先。メールアドレスか既存の SNS トピックの ARN（任意。`alarms`、[アラームの通知](DEPLOY_ja.md#アラームの通知オプション) を参照） |
 
 **📝 JSON** タブでは設定 JSON を直接編集できます。タブ間で双方向に同期されます。
 
@@ -61,7 +62,7 @@ npm run dev:console
 
 ### 4. 既存テナントの更新
 
-スタック行の **🔄 Update** をクリックします。モーダルには Lambda 環境変数から復元された現在の設定がプリロードされます。任意のフィールドを編集してデプロイします。
+スタック行の **🔄 Update** をクリックします。モーダルには Lambda 環境変数から復元された現在の設定と、スタックの CloudFormation テンプレートから読んだアラームの通知先がプリロードされます。任意のフィールドを編集してデプロイします。アラームの通知先を空にしてデプロイすると、通知は外れます。
 
 ### 5. テナントの削除
 
