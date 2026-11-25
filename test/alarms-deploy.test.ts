@@ -31,6 +31,12 @@ describe('Console reads the alarms setting back from the deployed template', () 
     expect(alarmsFromTemplate(templateBody({ topicArn }))).toEqual({ topicArn });
   });
 
+  test('noNewEntriesDays, alone and with a topic', () => {
+    const topicArn = 'arn:aws:sns:us-east-1:123456789012:wnsn-alarms';
+    expect(alarmsFromTemplate(templateBody({ noNewEntriesDays: 4 }))).toEqual({ noNewEntriesDays: 4 });
+    expect(alarmsFromTemplate(templateBody({ topicArn, noNewEntriesDays: 2 }))).toEqual({ topicArn, noNewEntriesDays: 2 });
+  });
+
   test('none, or a template that cannot be read', () => {
     expect(alarmsFromTemplate(templateBody())).toEqual({});
     expect(alarmsFromTemplate('not json')).toEqual({});
@@ -52,6 +58,8 @@ describe('deploy.sh alarm options', () => {
     [['--alarm-email', "o'p@example.com"], /Not an email address/],
     [['--alarm-topic-arn', 'arn:aws:sqs:us-east-1:123456789012:q'], /Not the ARN of an SNS standard topic/],
     [['--alarm-topic-arn', 'arn:aws:sns:us-east-1:123456789012:t.fifo'], /Not the ARN of an SNS standard topic/],
+    [['--no-new-entries-days', '8'], /whole number from 1 to 7/],
+    [['--no-new-entries-days', '1; true'], /whole number from 1 to 7/],
   ])('stops before any AWS call for %j', (args, message) => {
     const r = run(...args);
     expect(r.status).toBe(1);

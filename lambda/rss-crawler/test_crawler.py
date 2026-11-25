@@ -6,6 +6,8 @@ import sys
 from typing import ClassVar
 from unittest.mock import MagicMock
 
+import pytest
+
 os.environ.setdefault("DDB_TABLE_NAME", "test-table")
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 # feedparser is not needed by the functions under test and is not installed in CI
@@ -221,3 +223,53 @@ class TestConditionalWrite:
         items = self._crawl(monkeypatch, [{**self.SUMMARIZED, "notifier_name": "Other"}], [_entry()], [])
         assert items[("https://e/a", "N")]["title"] == "T"
         assert items[("https://e/a", "Other")]["summary"] == "sum"
+
+
+class TestCrawlFailures:
+    """A crawl that cannot read a feed or write a post fails, after crawling the other feeds"""
+
+    FEED_OK: ClassVar[dict] = {"feed": {"updated": "Tue, 24 Nov 2026 00:00:00 GMT"}, "entries": [_entry()]}
+
+    def _run(self, monkeypatch, results, table=None):
+        monkeypatch.setattr(crawler, "feedparser", MagicMock(parse=lambda url: results[url]))
+        monkeypatch.setattr(crawler, "recently_published", lambda pub: True)
+        monkeypatch.setattr(crawler, "ClientError", _FakeClientError)
+        table = table or MagicMock()
+        monkeypatch.setattr(crawler, "table", table)
+        notifier = {"rssUrl": {name: name for name in results}}
+        crawler.handler({"notifierName": "N", "notifier": notifier}, None)
+        return table
+
+    def test_a_feed_that_cannot_be_fetched_fails_the_crawl(self, monkeypatch):
+        broken = {"bozo": True, "bozo_exception": OSError("connection refused"), "feed": {}, "entries": []}
+        with pytest.raises(crawler.CrawlError, match="1 RSS feed\\(s\\) of N failed: broken"):
+            self._run(monkeypatch, {"broken": broken})
+
+    def test_a_feed_without_an_updated_date_fails_the_crawl(self, monkeypatch):
+        with pytest.raises(crawler.CrawlError, match="nodate"):
+            self._run(monkeypatch, {"nodate": {"feed": {}, "entries": [_entry()]}})
+
+    def test_a_readable_feed_with_bozo_set_is_still_crawled(self, monkeypatch):
+        # bozo is also set for feeds that parse, for example after a character encoding override
+        feed = {**self.FEED_OK, "bozo": True, "bozo_exception": ValueError("encoding overridden")}
+        table = self._run(monkeypatch, {"ok": feed})
+        assert table.put_item.call_count == 1
+
+    def test_one_broken_feed_does_not_stop_the_others(self, monkeypatch):
+        broken = {"bozo": True, "bozo_exception": OSError("timed out"), "feed": {}, "entries": []}
+        table = MagicMock()
+        with pytest.raises(crawler.CrawlError, match="broken"):
+            self._run(monkeypatch, {"broken": broken, "ok": self.FEED_OK}, table)
+        assert table.put_item.call_count == 1
+
+    def test_a_write_error_fails_the_crawl(self, monkeypatch):
+        table = MagicMock()
+        table.put_item.side_effect = _FakeClientError("ProvisionedThroughputExceededException")
+        with pytest.raises(crawler.CrawlError, match="ok"):
+            self._run(monkeypatch, {"ok": self.FEED_OK}, table)
+
+    def test_duplicates_do_not_fail_the_crawl(self, monkeypatch):
+        table = MagicMock()
+        table.put_item.side_effect = _FakeClientError("ConditionalCheckFailedException")
+        self._run(monkeypatch, {"ok": self.FEED_OK}, table)
+        assert table.put_item.call_count == 1

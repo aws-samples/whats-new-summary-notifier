@@ -113,12 +113,13 @@ def write_to_table(link, title, category, pubtime, notifier_name, description=""
             ExpressionAttributeNames={"#url": "url"},
         )
     except ClientError as e:
-        # Intentional error handling for duplicates to continue
+        # The post is already stored: expected on every crawl, so continue
         if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
             print("Duplicate item put: " + title)
         else:
-            # Continue for other errors
-            print(e)
+            # Any other error fails the crawl, so the retry and the dropped-crawl alarm see it.
+            # A retry cannot write a post twice: the write is conditional.
+            raise
 
 
 def add_blog(rss_name, entries, notifier_name, categories=None):
@@ -149,18 +150,49 @@ def add_blog(rss_name, entries, notifier_name, categories=None):
             print("Old blog entry. skip: " + entry["title"])
 
 
+class FeedError(Exception):
+    """An RSS feed could not be read."""
+
+
+class CrawlError(Exception):
+    """One or more RSS feeds of a notifier failed; the others were still crawled."""
+
+
+def crawl_feed(rss_name, rss_url, notifier_name, categories):
+    """Read one RSS feed and write its recent posts
+
+    Raises:
+        FeedError: the feed could not be fetched or parsed, or it has no updated date
+    """
+    rss_result = feedparser.parse(rss_url)
+    # default=str: feedparser puts the exception of a failed fetch or parse in the result
+    print(json.dumps(rss_result, default=str))
+    # feedparser does not raise on a network or parse error; it sets bozo_exception instead
+    if not rss_result.get("entries") and rss_result.get("bozo_exception") is not None:
+        raise FeedError(f"cannot read the feed: {rss_result['bozo_exception']!r}")
+    updated = (rss_result.get("feed") or {}).get("updated")
+    if not updated:
+        raise FeedError("the feed has no updated date")
+    print("RSS updated " + updated)
+    if not recently_published(updated):
+        # Do not process RSS feeds that have not been updated for a certain period of time.
+        # If you want to retrieve from the past, change this number of days and re-import.
+        print("Skip RSS " + rss_name)
+        return
+    add_blog(rss_name, rss_result["entries"], notifier_name, categories)
+
+
 def handler(event, context):
 
     notifier_name, notifier = event.values()
 
-    rss_urls = notifier["rssUrl"]
-    for rss_name, rss_url in rss_urls.items():
-        rss_result = feedparser.parse(rss_url)
-        print(json.dumps(rss_result))
-        print("RSS updated " + rss_result["feed"]["updated"])
-        if not recently_published(rss_result["feed"]["updated"]):
-            # Do not process RSS feeds that have not been updated for a certain period of time.
-            # If you want to retrieve from the past, change this number of days and re-import.
-            print("Skip RSS " + rss_name)
-            continue
-        add_blog(rss_name, rss_result["entries"], notifier_name, filter_categories(notifier))
+    # Crawl every feed, then fail if any failed: one broken feed does not stop the others
+    failed = []
+    for rss_name, rss_url in notifier["rssUrl"].items():
+        try:
+            crawl_feed(rss_name, rss_url, notifier_name, filter_categories(notifier))
+        except Exception as error:  # noqa: BLE001 - reported below, after the other feeds
+            print(f"ERROR: RSS {rss_name} ({rss_url}) of {notifier_name} failed: {error!r}")
+            failed.append(rss_name)
+    if failed:
+        raise CrawlError(f"{len(failed)} RSS feed(s) of {notifier_name} failed: {', '.join(failed)}")

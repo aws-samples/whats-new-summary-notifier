@@ -7,7 +7,7 @@ import { Role, Policy, ServicePrincipal, PolicyStatement, Effect } from 'aws-cdk
 import { Runtime, StartingPosition, FilterCriteria, FilterRule } from 'aws-cdk-lib/aws-lambda';
 import { DynamoEventSource, SqsDlq } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Queue, QueueEncryption } from 'aws-cdk-lib/aws-sqs';
-import { Alarm, ComparisonOperator, TreatMissingData } from 'aws-cdk-lib/aws-cloudwatch';
+import { Alarm, CfnAlarm, ComparisonOperator, TreatMissingData } from 'aws-cdk-lib/aws-cloudwatch';
 import { SnsAction } from 'aws-cdk-lib/aws-cloudwatch-actions';
 import { ITopic, Topic } from 'aws-cdk-lib/aws-sns';
 import { EmailSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
@@ -63,9 +63,10 @@ export function validateNotifierFilters(notifiers: Record<string, Record<string,
 export interface AlarmSettings {
   topicArn?: string;
   email?: string;
+  noNewEntriesDays?: number;
 }
 
-const ALARM_KEYS = ['topicArn', 'email'];
+const ALARM_KEYS = ['topicArn', 'email', 'noNewEntriesDays'];
 const SNS_TOPIC_ARN = /^arn:aws[a-z-]*:sns:([a-z0-9-]+):(\d{12}):[A-Za-z0-9_-]{1,256}$/;
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
@@ -93,10 +94,11 @@ export function parseAlarmSettings(value: unknown, region: string): AlarmSetting
   for (const key of Object.keys(s)) {
     if (!ALARM_KEYS.includes(key)) throw new Error(`alarms.${key} is not a known setting (${ALARM_KEYS.join(', ')})`);
   }
-  const { topicArn, email } = s;
+  const { topicArn, email, noNewEntriesDays } = s;
   if (topicArn !== undefined && email !== undefined) {
     throw new Error('alarms.topicArn and alarms.email cannot both be set');
   }
+  const result: AlarmSettings = {};
   if (topicArn !== undefined) {
     const m = typeof topicArn === 'string' ? SNS_TOPIC_ARN.exec(topicArn) : null;
     if (!m) throw new Error('alarms.topicArn must be the ARN of an SNS standard topic');
@@ -104,13 +106,20 @@ export function parseAlarmSettings(value: unknown, region: string): AlarmSetting
     if (!Token.isUnresolved(region) && m[1] !== region) {
       throw new Error(`alarms.topicArn is in ${m[1]}; use a topic in the stack's Region (${region})`);
     }
-    return { topicArn: m[0] };
+    result.topicArn = m[0];
   }
   if (email !== undefined) {
     if (typeof email !== 'string' || !EMAIL.test(email)) throw new Error('alarms.email must be an email address');
-    return { email };
+    result.email = email;
   }
-  return undefined;
+  if (noNewEntriesDays !== undefined) {
+    // A daily period over N periods; CloudWatch allows at most 7 days for period x periods
+    if (typeof noNewEntriesDays !== 'number' || !Number.isInteger(noNewEntriesDays) || noNewEntriesDays < 1 || noNewEntriesDays > 7) {
+      throw new Error('alarms.noNewEntriesDays must be a whole number of days from 1 to 7');
+    }
+    result.noNewEntriesDays = noNewEntriesDays;
+  }
+  return Object.keys(result).length ? result : undefined;
 }
 
 export class WhatsNewSummaryNotifierStack extends Stack {
@@ -270,6 +279,43 @@ export class WhatsNewSummaryNotifierStack extends Stack {
       role: newsCrawlerRole,
       environment: crawlerEnvironment,
     });
+
+    // A crawl that fails is retried twice by Lambda's asynchronous queue and then dropped. The
+    // next hourly crawl reads the same 7 days again, so a dropped crawl loses nothing unless the
+    // failure goes on, which this alarm shows.
+    alarms.push(
+      new Alarm(this, 'CrawlerDroppedAlarm', {
+        alarmDescription:
+          'A crawl failed 3 times and was dropped: an RSS feed could not be read or an article could not be written. Search the newsCrawler log group for "ERROR: RSS"',
+        metric: newsCrawler.metric('AsyncEventsDropped', { statistic: 'Sum', period: Duration.hours(1) }),
+        threshold: 1,
+        evaluationPeriods: 1,
+        comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        treatMissingData: TreatMissingData.NOT_BREACHING,
+      })
+    );
+
+    // Optional: no new article reached the notify Lambda for N days. It only receives INSERT
+    // records, so its invocations count new articles (plus retries), for all notifiers together.
+    const noNewEntriesDays = alarmSettings?.noNewEntriesDays;
+    if (noNewEntriesDays) {
+      const noNewEntries = new Alarm(this, 'NoNewEntriesAlarm', {
+        alarmDescription: `No new article reached the notify Lambda for ${noNewEntriesDays} days: check the crawler logs, the EventBridge rules and the RSS feeds`,
+        metric: notifyNewEntry.metric('Invocations', { statistic: 'Sum', period: Duration.days(1) }),
+        threshold: 1,
+        evaluationPeriods: noNewEntriesDays,
+        datapointsToAlarm: noNewEntriesDays,
+        comparisonOperator: ComparisonOperator.LESS_THAN_THRESHOLD,
+        // A day without invocations has no data point; count it as a day without articles
+        treatMissingData: TreatMissingData.BREACHING,
+      });
+      // The L2 Alarm has no warm-up yet. Wait 2 days (the most CloudWatch allows) after the alarm
+      // is created, so a new stack is not in ALARM before its first crawl.
+      (noNewEntries.node.defaultChild as CfnAlarm).addPropertyOverride('WarmUpConfiguration', {
+        WarmUpPeriodDurationInMinutes: 2880,
+      });
+      alarms.push(noNewEntries);
+    }
 
     for (const notifierName in notifiers) {
       const notifier = notifiers[notifierName];

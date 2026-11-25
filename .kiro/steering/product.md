@@ -3,7 +3,7 @@
 Whats New Summary Notifier は、AWS What's New などの Web 記事の RSS フィードを定期的にクロールし、Amazon Bedrock で記事内容を要約して Slack、Microsoft Teams、Google Chat（preview）に通知する生成 AI アプリケーション。
 
 ## 主要機能
-- RSS フィードの定期クロール（EventBridge スケジュール）
+- RSS フィードの定期クロール（EventBridge スケジュール）。notifier のフィードをすべて読んでから、取得・解析できない・更新日が無い・DynamoDB に書けない（重複以外）フィードがあればまとめて例外にする（Lambda の非同期の再試行 2 回のあと捨てられ、`AsyncEventsDropped` のアラームが鳴る）。任意の `alarms.noNewEntriesDays`（1〜7）で、通知 Lambda の起動が N 日続けて 0 のときのアラーム（評価前の待ち 2 日）
 - 新着記事の DynamoDB への記録（重複排除付き）
 - DynamoDB Streams トリガーによる記事本文の取得・要約・通知（`<main>` → `<article>` → `<body>` の順に本文を探し、取れないときは RSS の説明文で要約。取得先は公開の http(s) のアドレスだけで、タイムアウトとサイズの上限付き）
 - 要約結果の DynamoDB への書き戻し（summary, detail, summary_status）

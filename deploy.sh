@@ -35,6 +35,7 @@ NON_INTERACTIVE=false
 CONFIG_FILE=""
 ALARM_EMAIL=""
 ALARM_TOPIC_ARN=""
+NO_NEW_ENTRIES_DAYS=""
 
 #-----------------------------------------------------------------------------
 # Parse CLI arguments
@@ -49,6 +50,7 @@ while [[ $# -gt 0 ]]; do
     --config)         CONFIG_FILE="$2"; shift 2 ;;
     --alarm-email)    ALARM_EMAIL="$2"; shift 2 ;;
     --alarm-topic-arn) ALARM_TOPIC_ARN="$2"; shift 2 ;;
+    --no-new-entries-days) NO_NEW_ENTRIES_DAYS="$2"; shift 2 ;;
     --destroy)        DESTROY=true; shift ;;
     --non-interactive) NON_INTERACTIVE=true; shift ;;
     -h|--help)        usage; exit 0 ;;
@@ -71,8 +73,10 @@ Options:
   --alarm-email ADDR    Email the stack's alarms (ALARM and OK) to this address;
                         confirm the subscription email SNS sends after the deploy
   --alarm-topic-arn ARN Send the stack's alarms to this existing SNS topic instead
-                        Pass the same alarm option on every update: a deploy
-                        without it removes the alarm notifications
+  --no-new-entries-days N
+                        Also alarm when no new article arrives for N days (1-7)
+                        Pass the same alarm options on every update: a deploy
+                        without them removes the alarm notifications
   --destroy             Destroy the stack instead of deploying
   --non-interactive     Skip interactive prompts
   -h, --help            Show this help
@@ -159,6 +163,9 @@ if [[ -n "$ALARM_EMAIL" && ! "$ALARM_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+
 fi
 if [[ -n "$ALARM_TOPIC_ARN" && ! "$ALARM_TOPIC_ARN" =~ ^arn:aws[a-z-]*:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]{1,256}$ ]]; then
   echo "Not the ARN of an SNS standard topic: $ALARM_TOPIC_ARN"; exit 1
+fi
+if [[ -n "$NO_NEW_ENTRIES_DAYS" && ! "$NO_NEW_ENTRIES_DAYS" =~ ^[1-7]$ ]]; then
+  echo "--no-new-entries-days must be a whole number from 1 to 7: $NO_NEW_ENTRIES_DAYS"; exit 1
 fi
 
 case "$DESTINATION" in
@@ -399,12 +406,14 @@ NOTIFIERS_JSON=$(cat <<EOJSON
 EOJSON
 )
 
-CDK_CONTEXT_JSON=$(ALARM_EMAIL="$ALARM_EMAIL" ALARM_TOPIC_ARN="$ALARM_TOPIC_ARN" python3 -c "
+CDK_CONTEXT_JSON=$(ALARM_EMAIL="$ALARM_EMAIL" ALARM_TOPIC_ARN="$ALARM_TOPIC_ARN" NO_NEW_ENTRIES_DAYS="$NO_NEW_ENTRIES_DAYS" python3 -c "
 import json, os
 ctx = {
     'notifiers': json.loads('''$NOTIFIERS_JSON''')
 }
 alarms = {k: v for k, v in (('email', os.environ['ALARM_EMAIL']), ('topicArn', os.environ['ALARM_TOPIC_ARN'])) if v}
+if os.environ['NO_NEW_ENTRIES_DAYS']:
+    alarms['noNewEntriesDays'] = int(os.environ['NO_NEW_ENTRIES_DAYS'])
 if alarms:
     ctx['alarms'] = alarms
 print(json.dumps(ctx))

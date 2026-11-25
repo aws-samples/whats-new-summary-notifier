@@ -10,7 +10,7 @@ type Stack = {
   alarms?: AlarmSettings;
 };
 // The stack's optional `alarms` setting (see DEPLOY.md, "Alarm notifications")
-type AlarmSettings = { email?: string; topicArn?: string };
+type AlarmSettings = { email?: string; topicArn?: string; noNewEntriesDays?: number };
 type DdbItem = Record<string, any>;
 type DeployMode = 'new' | 'update' | 'destroy' | null;
 type BuildInfo = {
@@ -831,14 +831,20 @@ export function App() {
                           <div>
                             <label htmlFor="alarm-email" className="block text-xs text-gray-600 mb-1">Email</label>
                             <input id="alarm-email" type="email" value={guiConfig.alarms.email ?? ''} disabled={!!guiConfig.alarms.topicArn}
-                              onChange={(e) => updateGui({ alarms: { email: e.target.value } })}
+                              onChange={(e) => updateGui({ alarms: { ...guiConfig.alarms, email: e.target.value, topicArn: undefined } })}
                               className="w-full border border-gray-300 rounded px-2 py-1 text-xs disabled:bg-gray-100" placeholder="ops@example.com" />
                           </div>
                           <div>
                             <label htmlFor="alarm-topic" className="block text-xs text-gray-600 mb-1">or an existing SNS topic ARN</label>
                             <input id="alarm-topic" value={guiConfig.alarms.topicArn ?? ''} disabled={!!guiConfig.alarms.email}
-                              onChange={(e) => updateGui({ alarms: { topicArn: e.target.value } })}
+                              onChange={(e) => updateGui({ alarms: { ...guiConfig.alarms, topicArn: e.target.value, email: undefined } })}
                               className="w-full border border-gray-300 rounded px-2 py-1 text-xs font-mono disabled:bg-gray-100" placeholder="arn:aws:sns:<region>:<account>:<topic>" />
+                          </div>
+                          <div>
+                            <label htmlFor="alarm-days" className="block text-xs text-gray-600 mb-1">Alarm when no new article for (days, 1-7)</label>
+                            <input id="alarm-days" type="number" min={1} max={7} step={1} value={guiConfig.alarms.noNewEntriesDays ?? ''}
+                              onChange={(e) => updateGui({ alarms: { ...guiConfig.alarms, noNewEntriesDays: e.target.value ? Number(e.target.value) : undefined } })}
+                              className="w-full border border-gray-300 rounded px-2 py-1 text-xs" placeholder="off" />
                           </div>
                         </div>
                         <p className="text-xs text-gray-500">

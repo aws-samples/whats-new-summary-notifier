@@ -52,7 +52,7 @@ npm run dev:console
 | 🤖 Model Configuration | Model Region（ドロップダウン）、Model IDs（Bedrock + CRIS モデルのサジェスト付き） |
 | 📝 Summarizers | 名前、出力言語、ペルソナ（Notifiers より先に定義） |
 | 🔔 Notifiers | 名前、通知先（Slack/Teams/Google Chat（preview））、Summarizer（定義済み Summarizer のドロップダウン）、SSM パラメータ名（既存のドロップダウン + 手入力）、RSS URL。オプションの `filter` は読み取りだけで表示（JSON タブで編集） |
-| 🚨 Alarm notifications | スタックのアラームの通知先。メールアドレスか既存の SNS トピックの ARN（任意。`alarms`、[アラームの通知](DEPLOY_ja.md#アラームの通知オプション) を参照） |
+| 🚨 Alarm notifications | スタックのアラームの通知先（メールアドレスか既存の SNS トピックの ARN）と、新着なしのアラームの日数（任意。`alarms`、[アラームの通知](DEPLOY_ja.md#アラームの通知オプション) を参照） |
 
 **📝 JSON** タブでは設定 JSON を直接編集できます。タブ間で双方向に同期されます。
 
