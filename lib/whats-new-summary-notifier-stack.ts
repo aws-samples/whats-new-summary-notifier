@@ -7,7 +7,7 @@ import { Role, Policy, ServicePrincipal, PolicyStatement, Effect } from 'aws-cdk
 import { Runtime, StartingPosition, FilterCriteria, FilterRule } from 'aws-cdk-lib/aws-lambda';
 import { DynamoEventSource, SqsDlq } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Queue, QueueEncryption } from 'aws-cdk-lib/aws-sqs';
-import { Alarm, CfnAlarm, ComparisonOperator, TreatMissingData } from 'aws-cdk-lib/aws-cloudwatch';
+import { Alarm, CfnAlarm, ComparisonOperator, Metric, TreatMissingData } from 'aws-cdk-lib/aws-cloudwatch';
 import { SnsAction } from 'aws-cdk-lib/aws-cloudwatch-actions';
 import { ITopic, Topic } from 'aws-cdk-lib/aws-sns';
 import { EmailSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
@@ -267,6 +267,46 @@ export class WhatsNewSummaryNotifierStack extends Stack {
       comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
       treatMissingData: TreatMissingData.NOT_BREACHING,
     }));
+
+    // The notify Lambda writes one EMF log line per record with these counts (see index.py).
+    // Failed: an article was given up (webhook 4xx, no access to the model, no text, ...).
+    // RelevanceFailOpen: the topics check got no answer from any model and posted anyway.
+    const notifyMetric = (metricName: string) =>
+      new Metric({
+        namespace: 'WhatsNewSummaryNotifier',
+        metricName,
+        dimensionsMap: { FunctionName: notifyNewEntry.functionName },
+        statistic: 'Sum',
+        period: Duration.hours(1),
+      });
+    alarms.push(
+      new Alarm(this, 'NotifyFailedAlarm', {
+        alarmDescription:
+          'An article was not notified and its item has summary_status=failed; the item\'s failure_reason and the notify Lambda log ("is not notified") say why',
+        metric: notifyMetric('Failed'),
+        threshold: 1,
+        evaluationPeriods: 1,
+        comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        treatMissingData: TreatMissingData.NOT_BREACHING,
+      })
+    );
+    const anyTopics = Object.values(notifiers ?? {}).some((n) => {
+      const topics = (n as { filter?: { topics?: unknown } })?.filter?.topics;
+      return Array.isArray(topics) && topics.some((t) => typeof t === 'string' && t.trim() !== '');
+    });
+    if (anyTopics) {
+      alarms.push(
+        new Alarm(this, 'RelevanceFailOpenAlarm', {
+          alarmDescription:
+            'The topics check got no valid answer from any model, so an article was posted without the check; see "relevance" in the notify Lambda log',
+          metric: notifyMetric('RelevanceFailOpen'),
+          threshold: 1,
+          evaluationPeriods: 1,
+          comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+          treatMissingData: TreatMissingData.NOT_BREACHING,
+        })
+      );
+    }
 
     // Allow writing to DynamoDB
     rssHistoryTable.grantWriteData(newsCrawlerRole);

@@ -223,6 +223,20 @@ aws logs describe-log-groups --log-group-name-prefix WhatsNewSummaryNotifier --q
 
 For 14 days after an update from an earlier version, older events are still in `/aws/lambda/<stack name>-NotifyNewEntry...` and `/aws/lambda/<stack name>-newsCrawler...`. Select both log groups in Logs Insights to search across the update.
 
+### Metrics
+For every stream record it processes, the notify Lambda writes one log line in the CloudWatch embedded metric format (EMF). CloudWatch turns it into six metrics in the `WhatsNewSummaryNotifier` namespace, with one dimension, `FunctionName` (the notify Lambda's name, so every stack has its own). Each is 0 or 1 per record:
+
+| Metric | 1 when | Alarm |
+|---|---|---|
+| `Notified` | The article was posted | - |
+| `Filtered` | `filter.categories` or the `topics` check left the article out | - |
+| `Failed` | The article was given up and its item has `summary_status` = `failed` (a webhook 4xx, no access to the model, no text, retries exhausted) | Sum over 1 hour >= 1 |
+| `RelevanceFailOpen` | The `topics` check got no valid answer from any model, so the article was posted without the check | Sum over 1 hour >= 1, only when a notifier has `filter.topics` |
+| `ModelFallback` | Summarizing moved on to the next model in `modelIds` | - |
+| `DescriptionFallback` | The article page could not be used, so the RSS description was summarized | - |
+
+`Notified + Filtered + Failed` is the number of articles that finished in a period, so you can graph `ModelFallback` or `DescriptionFallback` as a share of it. A retried record writes a line each time, with only the degradation counts. The metrics do not say which article, notifier or model; the log lines around the EMF line do. Bedrock token counts, latency and throttling are already in the `AWS/Bedrock` namespace per model, so they are not counted again. Cost in us-east-1: six custom metrics, $0.30 each per month ($1.80 per stack), and $0.10 per alarm per month ([CloudWatch pricing](https://aws.amazon.com/cloudwatch/pricing/)).
+
 ### When a crawl fails
 The crawler reads every RSS feed of a notifier, then fails when any feed could not be fetched or parsed, has no updated date, or an article could not be written to DynamoDB (an article that is already stored is not a failure). Lambda retries a failed crawl twice, 1 and then 2 more minutes later, and then drops it. The next hourly crawl reads the last 7 days of the feed again, so no article is lost when the problem is fixed within a few days.
 

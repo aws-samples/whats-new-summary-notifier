@@ -817,3 +817,97 @@ class TestPostToWebhook:
 
         monkeypatch.setattr(index.urllib.request, "urlopen", lambda req, timeout=None: _Res())
         index.post_to_webhook("https://hooks.example.com/x", b"{}")
+
+
+def _emf_lines(out):
+    """The EMF documents in the captured stdout, one per line"""
+    docs = []
+    for line in out.splitlines():
+        if line.startswith('{"_aws"'):
+            docs.append(json.loads(line))
+    return docs
+
+
+@pytest.mark.usefixtures("real_error_classes")
+class TestMetrics:
+    """Each processed record writes one EMF line with the six counts, then the counts reset."""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self, monkeypatch):
+        index._metrics.clear()
+        monkeypatch.setenv("AWS_LAMBDA_FUNCTION_NAME", "Stack-NotifyNewEntry-abc")
+        yield
+        index._metrics.clear()
+
+    def _handler_counts(self, monkeypatch, capsys, **kwargs):
+        TestHandlerFailures()._run(monkeypatch, **kwargs)
+        docs = _emf_lines(capsys.readouterr().out)
+        assert len(docs) == 1
+        doc = docs[0]
+        directive = doc["_aws"]["CloudWatchMetrics"][0]
+        assert directive["Namespace"] == "WhatsNewSummaryNotifier"
+        assert directive["Dimensions"] == [["FunctionName"]]
+        assert [m["Name"] for m in directive["Metrics"]] == list(index.METRIC_NAMES)
+        assert isinstance(doc["_aws"]["Timestamp"], int)
+        assert doc["FunctionName"] == "Stack-NotifyNewEntry-abc"
+        assert index._metrics == {}
+        return {n: doc[n] for n in index.METRIC_NAMES}
+
+    def test_a_posted_article_counts_notified(self, monkeypatch, capsys):
+        counts = self._handler_counts(monkeypatch, capsys)
+        assert counts == {"Notified": 1, "Filtered": 0, "Failed": 0, "RelevanceFailOpen": 0, "ModelFallback": 0,
+                          "DescriptionFallback": 0}
+
+    def test_a_failed_article_counts_failed(self, monkeypatch, capsys):
+        counts = self._handler_counts(monkeypatch, capsys, post_error=_http_error(400))
+        assert counts["Failed"] == 1 and counts["Notified"] == 0
+
+    def test_a_retry_writes_a_line_without_an_outcome(self, monkeypatch, capsys):
+        counts = self._handler_counts(monkeypatch, capsys, post_error=_http_error(503),
+                                      stored={"notify_attempts": 1})
+        assert counts["Notified"] == counts["Failed"] == counts["Filtered"] == 0
+
+    def test_retries_exhausted_counts_failed(self, monkeypatch, capsys):
+        counts = self._handler_counts(monkeypatch, capsys, post_error=_http_error(503),
+                                      stored={"notify_attempts": index.MAX_ATTEMPTS})
+        assert counts["Failed"] == 1
+
+    def test_a_duplicate_delivery_counts_nothing(self, monkeypatch, capsys):
+        counts = self._handler_counts(monkeypatch, capsys, stored={"notify_attempts": 2, "summary_status": "completed"})
+        assert set(counts.values()) == {0}
+
+    def test_filtered_by_category_or_topic(self, monkeypatch):
+        TestPushNotificationFilter()._push(monkeypatch, filter_result="excluded:categories")
+        assert index._metrics == {"Filtered": 1}
+        index._metrics.clear()
+        TestPushNotificationFilter()._push(monkeypatch, notifier_filter={"topics": ["AI"]}, relevant=False)
+        assert index._metrics == {"Filtered": 1}
+
+    def test_description_fallback(self, monkeypatch):
+        TestPushNotificationFallback()._push(monkeypatch, None, "<p>desc</p>")
+        assert index._metrics == {"DescriptionFallback": 1, "Notified": 1}
+
+    def test_model_fallback(self, monkeypatch):
+        summarize = TestSummarizeBlog()
+        summarize._run(monkeypatch, [summarize._response([], "content_filtered"),
+                                     summarize._response([{"text": TestSummarizeBlog.OUTPUT}])])
+        assert index._metrics == {"ModelFallback": 1}
+
+    @pytest.mark.parametrize("responses", [
+        [TestJudgeRelevance._response("I think so")],
+        [RuntimeError("x"), RuntimeError("y")],
+    ])
+    def test_relevance_fail_open(self, monkeypatch, responses):
+        TestJudgeRelevance()._run(monkeypatch, responses)
+        assert index._metrics == {"RelevanceFailOpen": 1}
+
+    def test_a_clear_relevance_answer_counts_nothing(self, monkeypatch):
+        TestJudgeRelevance()._run(monkeypatch, [TestJudgeRelevance._response("<relevant>no</relevant>")])
+        assert index._metrics == {}
+
+    def test_writing_the_line_never_fails_the_record(self, monkeypatch, capsys):
+        monkeypatch.setattr(index.time, "time", MagicMock(side_effect=OSError("clock")))
+        index.count("Notified")
+        index.emit_metrics()
+        assert "Failed to write metrics" in capsys.readouterr().out
+        assert index._metrics == {}

@@ -44,6 +44,45 @@ MAX_ATTEMPTS = int(os.environ.get("NOTIFY_MAX_ATTEMPTS", "3"))
 # A record whose item already has one of these was handled; a duplicate delivery does nothing
 DONE_STATUSES = {"completed", "failed", "filtered"}
 
+# One CloudWatch embedded metric format (EMF) line per processed record: how it ended (Notified,
+# Filtered, Failed) and what degraded on the way. The only dimension is the function name, so
+# the metric count stays at six per stack; the log lines tell which article and model.
+# Bedrock token, latency and throttle metrics are in the AWS/Bedrock namespace already.
+METRIC_NAMESPACE = "WhatsNewSummaryNotifier"
+METRIC_NAMES = ("Notified", "Filtered", "Failed", "RelevanceFailOpen", "ModelFallback", "DescriptionFallback")
+_metrics = {}
+
+
+def count(name):
+    """Set a metric of the record being processed to 1"""
+    _metrics[name] = 1
+
+
+def emit_metrics():
+    """Write the EMF line of the record being processed and reset the counts
+
+    The line stays a print: CloudWatch reads EMF only from a log event that is the JSON object
+    itself. Nothing here may fail the record.
+    """
+    try:
+        doc = {
+            "_aws": {
+                "Timestamp": int(time.time() * 1000),
+                "CloudWatchMetrics": [{
+                    "Namespace": METRIC_NAMESPACE,
+                    "Dimensions": [["FunctionName"]],
+                    "Metrics": [{"Name": n, "Unit": "Count"} for n in METRIC_NAMES],
+                }],
+            },
+            "FunctionName": os.environ.get("AWS_LAMBDA_FUNCTION_NAME", "local"),
+            **{n: _metrics.get(n, 0) for n in METRIC_NAMES},
+        }
+        print(json.dumps(doc))
+    except Exception as e:  # noqa: BLE001 - metrics are informational
+        print(f"Failed to write metrics: {e!r}")
+    finally:
+        _metrics.clear()
+
 
 class RetryableError(Exception):
     """A failure before the post that a later attempt may not hit."""
@@ -101,6 +140,7 @@ def post_to_webhook(url, data):
 def mark_failed(item, reason):
     """Record that the article was not notified and why, so a person can find it"""
     reason = reason[:MAX_REASON_CHARS]
+    count("Failed")
     print(f"ERROR: {item['rss_link']} is not notified: {reason}")
     try:
         ddb_table.update_item(
@@ -300,6 +340,7 @@ Follow the instruction. Start your response with <output>.
                 reason = str(error)
             if i < len(MODEL_IDS) - 1:
                 print(f"Model {model_id} failed ({reason}), falling back to next model")
+                count("ModelFallback")
                 continue
             raise
 
@@ -351,9 +392,11 @@ def judge_relevance(blog_body, topics, model_ids):
         print(f"Relevance metrics: {json.dumps({'model_id': model_id, 'input_tokens': usage.get('inputTokens', 0), 'output_tokens': usage.get('outputTokens', 0)})}")
         if len({a.lower() for a in answers}) != 1:
             print(f"WARNING: unexpected relevance answer from {model_id}, the article is notified: {output_text[:200]!r}")
+            count("RelevanceFailOpen")
             return None
         return answers[0].lower() == "yes"
     print("ERROR: the relevance check failed with every model, the article is notified")
+    count("RelevanceFailOpen")
     return None
 
 
@@ -402,6 +445,7 @@ def push_notification(item_list, context=None, pending=None):
         notifier = NOTIFIERS[item["rss_notifier_name"]]
         if item.get("rss_filter_result"):
             print(f"skip {item['rss_link']}: {item['rss_filter_result']}")
+            count("Filtered")
             continue
         webhook_url_parameter_name = notifier["webhookUrlParameterName"]
         destination = notifier["destination"]
@@ -423,6 +467,7 @@ def push_notification(item_list, context=None, pending=None):
                 description = article.description_text(item.get("rss_description", ""))
                 if description:
                     print(f"use the RSS description for {item_url}")
+                    count("DescriptionFallback")
                     content, source = description, "rss_description"
                 elif content is None:
                     mark_failed(item, "no article text and no RSS description")
@@ -434,6 +479,7 @@ def push_notification(item_list, context=None, pending=None):
                 relevant = judge_relevance(content, topics, notifier_filter(notifier, "modelIds") or MODEL_IDS)
                 if relevant is False:
                     print(f"skip {item_url}: not about the notifier's topics")
+                    count("Filtered")
                     try:
                         ddb_table.update_item(
                             Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
@@ -473,6 +519,7 @@ def push_notification(item_list, context=None, pending=None):
             raise RetryableError("not enough time left in this invocation to post")
         print(f"push_msg:{item}")
         post_to_webhook(app_webhook_url, encoded_msg)
+        count("Notified")
 
         # Posted. Nothing below may raise: a retry would post the article again.
         try:
@@ -689,3 +736,5 @@ def handler(event, context):
                 raise
             traceback.print_exc()
             mark_failed(item, f"{type(error).__name__}: {error}")
+        finally:
+            emit_metrics()

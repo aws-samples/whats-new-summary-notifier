@@ -222,6 +222,20 @@ aws logs describe-log-groups --log-group-name-prefix WhatsNewSummaryNotifier --q
 
 以前のバージョンから更新して 14 日の間は、それより前のイベントが `/aws/lambda/<スタック名>-NotifyNewEntry...` と `/aws/lambda/<スタック名>-newsCrawler...` に残っています。更新の前後をまとめて調べるときは、Logs Insights で両方のロググループを選んでください。
 
+### メトリクス
+通知 Lambda は、処理したストリームの記録ごとに、CloudWatch の埋め込みメトリクス形式（EMF）のログを 1 行書きます。CloudWatch はそこから `WhatsNewSummaryNotifier` 名前空間の 6 つのメトリクスを作ります。次元は `FunctionName`（通知 Lambda の名前。スタックごとに別になります）の 1 つだけです。どれも記録ごとに 0 か 1 です。
+
+| メトリクス | 1 になるとき | アラーム |
+|---|---|---|
+| `Notified` | 記事を投稿した | - |
+| `Filtered` | `filter.categories` か `topics` の判定で記事を外した | - |
+| `Failed` | 記事をあきらめ、項目に `summary_status` = `failed` を書いた（Webhook の 4xx、モデルを使う権限が無い、本文が無い、再試行を使い切った） | 1 時間の合計が 1 以上 |
+| `RelevanceFailOpen` | `topics` の判定でどのモデルからも有効な答えが返らず、判定なしで投稿した | 1 時間の合計が 1 以上。`filter.topics` のある notifier があるときだけ |
+| `ModelFallback` | 要約で `modelIds` の次のモデルに切り替えた | - |
+| `DescriptionFallback` | 記事のページが使えず、RSS の説明文を要約した | - |
+
+`Notified + Filtered + Failed` がその期間に処理を終えた記事の数なので、`ModelFallback` や `DescriptionFallback` をその割合としてグラフにできます。再試行した記録は、そのたびに劣化の数だけを入れた行を書きます。どの記事・notifier・モデルかはメトリクスでは分からないので、EMF の行の前後のログで確かめます。Bedrock のトークン数、レイテンシー、スロットリングはモデルごとに `AWS/Bedrock` 名前空間にあるので、数え直しません。費用は us-east-1 で、カスタムメトリクス 6 個が 1 個あたり月 0.30 ドル（1 スタックで 1.80 ドル）、アラームが 1 個あたり月 0.10 ドルです（[CloudWatch の料金](https://aws.amazon.com/cloudwatch/pricing/)）。
+
 ### クロールが失敗したとき
 クローラーは notifier のすべての RSS フィードを読んでから、フィードを取得・解析できなかった、フィードに更新日が無い、記事を DynamoDB に書けなかった（保存済みの記事は失敗ではありません）のどれかがあれば失敗します。失敗したクロールは Lambda が 2 回（1 分後と、さらに 2 分後）再試行し、そのあと捨てます。次の毎時のクロールがフィードの直近 7 日分を読み直すので、問題が数日のうちに直れば記事は失われません。
 

@@ -211,9 +211,21 @@ describe('WhatsNewSummaryNotifierStack', () => {
     expect(sendStatements[0].resource).toEqual({ 'Fn::GetAtt': [queueId, 'Arn'] });
   });
 
-  test('alarms on IteratorAge, the failure queue and dropped crawls, without actions', () => {
+  test('alarms on IteratorAge, the failure queue, dropped crawls and failed articles, without actions', () => {
     const template = createStack();
-    template.resourceCountIs('AWS::CloudWatch::Alarm', 3);
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 4);
+    template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      MetricName: 'Failed',
+      Namespace: 'WhatsNewSummaryNotifier',
+      Dimensions: [{ Name: 'FunctionName', Value: { Ref: Match.stringLikeRegexp('^NotifyNewEntry') } }],
+      Statistic: 'Sum',
+      Period: 3600,
+      Threshold: 1,
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+      TreatMissingData: 'notBreaching',
+    });
+    // No notifier has filter.topics, so there is no alarm on the topics check
+    expect(JSON.stringify(template.findResources('AWS::CloudWatch::Alarm'))).not.toContain('RelevanceFailOpen');
     template.hasResourceProperties('AWS::CloudWatch::Alarm', {
       MetricName: 'AsyncEventsDropped',
       Namespace: 'AWS/Lambda',
@@ -247,6 +259,29 @@ describe('WhatsNewSummaryNotifierStack', () => {
     }
     template.resourceCountIs('AWS::SNS::Topic', 0);
     template.resourceCountIs('AWS::SNS::Subscription', 0);
+  });
+
+  test('a notifier with filter.topics adds an alarm on RelevanceFailOpen', () => {
+    const template = createStack({
+      notifiers: {
+        AwsWhatsNew: {
+          destination: 'slack',
+          summarizerName: 'AwsSolutionsArchitectJapanese',
+          webhookUrlParameterName: '/WhatsNew/URL',
+          rssUrl: { "What's new": 'https://aws.amazon.com/about-aws/whats-new/recent/feed/' },
+          filter: { topics: ['Generative AI'] },
+        },
+      },
+    });
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 5);
+    template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      MetricName: 'RelevanceFailOpen',
+      Namespace: 'WhatsNewSummaryNotifier',
+      Statistic: 'Sum',
+      Period: 3600,
+      Threshold: 1,
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+    });
   });
 
   describe('alarm notifications', () => {
@@ -332,7 +367,7 @@ describe('WhatsNewSummaryNotifierStack', () => {
       const none = createStack();
       expect(JSON.stringify(none.findResources('AWS::CloudWatch::Alarm'))).not.toContain('"Invocations"');
       const template = createStack({ alarms: { noNewEntriesDays: 3 } });
-      template.resourceCountIs('AWS::CloudWatch::Alarm', 4);
+      template.resourceCountIs('AWS::CloudWatch::Alarm', 5);
       template.hasResourceProperties('AWS::CloudWatch::Alarm', {
         MetricName: 'Invocations',
         Namespace: 'AWS/Lambda',
