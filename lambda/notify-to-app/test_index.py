@@ -1,6 +1,7 @@
 """Tests for notify-to-app Lambda function."""
 
 import json
+import logging
 import os
 import sys
 import urllib.error
@@ -905,9 +906,37 @@ class TestMetrics:
         TestJudgeRelevance()._run(monkeypatch, [TestJudgeRelevance._response("<relevant>no</relevant>")])
         assert index._metrics == {}
 
-    def test_writing_the_line_never_fails_the_record(self, monkeypatch, capsys):
+    def test_writing_the_line_never_fails_the_record(self, monkeypatch, caplog):
         monkeypatch.setattr(index.time, "time", MagicMock(side_effect=OSError("clock")))
         index.count("Notified")
         index.emit_metrics()
-        assert "Failed to write metrics" in capsys.readouterr().out
+        assert [r.levelname for r in caplog.records if "Failed to write metrics" in r.getMessage()] == ["WARNING"]
         assert index._metrics == {}
+
+    def test_the_metric_line_is_a_print_not_a_log_record(self, capsys, caplog):
+        index.count("Notified")
+        index.emit_metrics()
+        assert len(_emf_lines(capsys.readouterr().out)) == 1
+        assert not [r for r in caplog.records if "_aws" in r.getMessage()]
+
+
+@pytest.mark.usefixtures("real_error_classes")
+class TestLogging:
+    """Log lines go through logging with a level; INFO is kept without Lambda's log level setting."""
+
+    def test_info_is_kept_without_aws_lambda_log_level(self):
+        assert "AWS_LAMBDA_LOG_LEVEL" not in os.environ
+        assert index.logger is logging.getLogger()
+        assert index.logger.isEnabledFor(logging.INFO)
+
+    def test_a_failed_article_is_logged_as_error_with_the_exception(self, monkeypatch, caplog):
+        caplog.set_level(logging.INFO)
+        TestHandlerFailures()._run(monkeypatch, post_error=_http_error(400))
+        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert any(r.exc_info and "Failed to notify https://example.com/a" in r.getMessage() for r in errors)
+        assert any("https://example.com/a is not notified: HTTPError" in r.getMessage() for r in errors)
+
+    def test_a_retry_is_logged_as_warning(self, monkeypatch, caplog):
+        caplog.set_level(logging.INFO)
+        TestHandlerFailures()._run(monkeypatch, post_error=_http_error(503), stored={"notify_attempts": 1})
+        assert [r.levelname for r in caplog.records if r.getMessage().startswith("Retry later:")] == ["WARNING"]

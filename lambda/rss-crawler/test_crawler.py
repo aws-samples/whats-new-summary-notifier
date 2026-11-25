@@ -1,6 +1,7 @@
 """Tests for rss-crawler Lambda function."""
 
 import importlib.util
+import logging
 import os
 import sys
 from typing import ClassVar
@@ -273,3 +274,13 @@ class TestCrawlFailures:
         table.put_item.side_effect = _FakeClientError("ConditionalCheckFailedException")
         self._run(monkeypatch, {"ok": self.FEED_OK}, table)
         assert table.put_item.call_count == 1
+
+    def test_a_broken_feed_is_logged_as_error_and_the_feed_line_stays_a_print(self, monkeypatch, capsys, caplog):
+        caplog.set_level(logging.INFO)
+        broken = {"bozo": True, "bozo_exception": OSError("timed out"), "feed": {}, "entries": []}
+        with pytest.raises(crawler.CrawlError):
+            self._run(monkeypatch, {"broken": broken, "ok": self.FEED_OK})
+        errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(errors) == 1 and errors[0].startswith("RSS broken (broken) of N failed:")
+        assert '"bozo_exception"' in capsys.readouterr().out
+        assert not [r for r in caplog.records if "bozo_exception" in r.getMessage()]

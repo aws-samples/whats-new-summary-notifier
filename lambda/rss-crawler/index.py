@@ -3,12 +3,21 @@
 
 import datetime
 import json
+import logging
 import os
 
 import boto3
 import dateutil.parser
 import feedparser
 from botocore.exceptions import ClientError
+
+# Logs go through the standard logging module, so each line carries its level and the request ID
+# and a multi-line message stays one log event. The feed line stays print: see crawl_feed.
+logger = logging.getLogger()
+if not os.environ.get("AWS_LAMBDA_LOG_LEVEL"):
+    # With the TEXT log format the Python runtime sends only WARNING and above; keep INFO as print
+    # did. With the JSON log format Lambda sets AWS_LAMBDA_LOG_LEVEL and the runtime applies it.
+    logger.setLevel(logging.INFO)
 
 # CRAWL_BLOG_URL = json.loads(os.environ["RSS_URL"])
 # NOTIFIERS = json.loads(os.environ["NOTIFIERS"])
@@ -26,7 +35,7 @@ def recently_published(pubdate):
     """
 
     elapsed_time = datetime.datetime.now() - str2datetime(pubdate)
-    print(elapsed_time)
+    logger.info(elapsed_time)
     return elapsed_time.days <= 7
 
 
@@ -50,7 +59,7 @@ def filter_categories(notifier):
         return []
     categories = notifier_filter.get("categories", []) if isinstance(notifier_filter, dict) else None
     if not isinstance(categories, list) or not all(isinstance(c, str) for c in categories):
-        print("Ignore filter.categories: it must be a list of strings")
+        logger.warning("Ignore filter.categories: it must be a list of strings")
         return []
     return [c.strip().lower() for c in categories if c.strip()]
 
@@ -104,7 +113,7 @@ def write_to_table(link, title, category, pubtime, notifier_name, description=""
             item["rss_description"] = description[:MAX_DESCRIPTION_CHARS]
         if filter_result:
             item["filter_result"] = filter_result
-        print({k: v for k, v in item.items() if k != "rss_description"})
+        logger.info({k: v for k, v in item.items() if k != "rss_description"})
         # Write only new posts: overwriting an existing item would drop its summary and
         # summary_status, and would send a MODIFY record to the notify Lambda
         table.put_item(
@@ -115,7 +124,7 @@ def write_to_table(link, title, category, pubtime, notifier_name, description=""
     except ClientError as e:
         # The post is already stored: expected on every crawl, so continue
         if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-            print("Duplicate item put: " + title)
+            logger.info("Duplicate item put: " + title)
         else:
             # Any other error fails the crawl, so the retry and the dropped-crawl alarm see it.
             # A retry cannot write a post twice: the write is conditional.
@@ -147,7 +156,7 @@ def add_blog(rss_name, entries, notifier_name, categories=None):
                 filter_result=EXCLUDED_BY_CATEGORIES if excluded else None,
             )
         else:
-            print("Old blog entry. skip: " + entry["title"])
+            logger.info("Old blog entry. skip: " + entry["title"])
 
 
 class FeedError(Exception):
@@ -165,7 +174,8 @@ def crawl_feed(rss_name, rss_url, notifier_name, categories):
         FeedError: the feed could not be fetched or parsed, or it has no updated date
     """
     rss_result = feedparser.parse(rss_url)
-    # default=str: feedparser puts the exception of a failed fetch or parse in the result
+    # default=str: feedparser puts the exception of a failed fetch or parse in the result.
+    # This line stays a print: as a logging message it would be escaped again in the JSON log format.
     print(json.dumps(rss_result, default=str))
     # feedparser does not raise on a network or parse error; it sets bozo_exception instead
     if not rss_result.get("entries") and rss_result.get("bozo_exception") is not None:
@@ -173,11 +183,11 @@ def crawl_feed(rss_name, rss_url, notifier_name, categories):
     updated = (rss_result.get("feed") or {}).get("updated")
     if not updated:
         raise FeedError("the feed has no updated date")
-    print("RSS updated " + updated)
+    logger.info("RSS updated " + updated)
     if not recently_published(updated):
         # Do not process RSS feeds that have not been updated for a certain period of time.
         # If you want to retrieve from the past, change this number of days and re-import.
-        print("Skip RSS " + rss_name)
+        logger.info("Skip RSS " + rss_name)
         return
     add_blog(rss_name, rss_result["entries"], notifier_name, categories)
 
@@ -192,7 +202,7 @@ def handler(event, context):
         try:
             crawl_feed(rss_name, rss_url, notifier_name, filter_categories(notifier))
         except Exception as error:  # noqa: BLE001 - reported below, after the other feeds
-            print(f"ERROR: RSS {rss_name} ({rss_url}) of {notifier_name} failed: {error!r}")
+            logger.error(f"RSS {rss_name} ({rss_url}) of {notifier_name} failed: {error!r}")
             failed.append(rss_name)
     if failed:
         raise CrawlError(f"{len(failed)} RSS feed(s) of {notifier_name} failed: {', '.join(failed)}")

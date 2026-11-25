@@ -240,7 +240,7 @@ For every stream record it processes, the notify Lambda writes one log line in t
 ### When a crawl fails
 The crawler reads every RSS feed of a notifier, then fails when any feed could not be fetched or parsed, has no updated date, or an article could not be written to DynamoDB (an article that is already stored is not a failure). Lambda retries a failed crawl twice, 1 and then 2 more minutes later, and then drops it. The next hourly crawl reads the last 7 days of the feed again, so no article is lost when the problem is fixed within a few days.
 
-The stack's alarm on the crawler's `AsyncEventsDropped` metric goes into ALARM when a crawl is dropped (it has actions only when you set `alarms`). Search the crawler's log group for `ERROR: RSS` to see which feed failed and why. Before this alarm was added, such a crawl ended without an error: if one of your feeds is already broken, the alarm goes into ALARM soon after the update.
+The stack's alarm on the crawler's `AsyncEventsDropped` metric goes into ALARM when a crawl is dropped (it has actions only when you set `alarms`). Search the crawler's log group for `ERROR` to see which feed failed and why: the line at level ERROR names the feed and the error. Before this alarm was added, such a crawl ended without an error: if one of your feeds is already broken, the alarm goes into ALARM soon after the update.
 
 ## Destroy
 
