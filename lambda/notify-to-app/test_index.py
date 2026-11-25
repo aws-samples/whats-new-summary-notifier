@@ -414,6 +414,7 @@ class TestPushNotificationFilter:
         calls = self._push(monkeypatch, notifier_filter={"topics": ["AI"]}, relevant=False)
         assert calls["summarize"] == 0 and calls["posted"] == 0
         assert calls["updates"][0]["ExpressionAttributeValues"] == {":st": "filtered"}
+        assert calls["updates"][0]["ConditionExpression"] == "attribute_exists(#url)"
 
     def test_unknown_answer_is_posted(self, monkeypatch):
         calls = self._push(monkeypatch, notifier_filter={"topics": ["AI"]}, relevant=None)
@@ -597,8 +598,10 @@ class TestHandlerFailures:
     """The handler re-raises only failures before the post that a retry may fix."""
 
     def _run(self, monkeypatch, summarize_error=None, post_error=None, update_error=None, content="body",
-             remaining_ms=None):
+             remaining_ms=None, stored=None):
         events, updates = [], []
+        # The item as start_attempt reads it back; None means the item no longer exists
+        stored = {"notify_attempts": 1} if stored is None else stored
 
         class _Res:
             def __enter__(self):
@@ -617,6 +620,12 @@ class TestHandlerFailures:
         monkeypatch.setattr(index, "ssm", ssm)
 
         def fake_update(**kw):
+            if kw["UpdateExpression"].startswith("ADD notify_attempts"):
+                assert kw["ConditionExpression"] == "attribute_exists(#url)" and kw["ReturnValues"] == "ALL_NEW"
+                if stored == "missing":
+                    raise _FakeClientError("ConditionalCheckFailedException")
+                return {"Attributes": stored}
+            assert kw["ConditionExpression"].startswith("attribute_exists(#url)")
             status = kw["ExpressionAttributeValues"][":st"]
             events.append(f"write {status}")
             updates.append(kw)
@@ -721,6 +730,28 @@ class TestHandlerFailures:
         events, updates, error = self._run(monkeypatch, remaining_ms=index.MIN_POST_TIME_MS - 1)
         assert isinstance(error, index.RetryableError)
         assert events == ["summarize"] and updates == []
+
+    @pytest.mark.parametrize("status", ["completed", "failed", "filtered"])
+    def test_a_finished_item_is_not_posted_again(self, monkeypatch, status):
+        # A duplicate delivery of a record that was already handled
+        events, updates, error = self._run(monkeypatch, stored={"notify_attempts": 2, "summary_status": status})
+        assert error is None and events == [] and updates == []
+
+    def test_a_missing_item_is_skipped_without_writing(self, monkeypatch):
+        events, updates, error = self._run(monkeypatch, stored="missing")
+        assert error is None and events == [] and updates == []
+
+    def test_last_attempt_marks_the_item_failed_and_still_raises(self, monkeypatch):
+        events, updates, error = self._run(monkeypatch, post_error=_http_error(503),
+                                           stored={"notify_attempts": index.MAX_ATTEMPTS})
+        assert isinstance(error, urllib.error.HTTPError)
+        assert "write completed" not in events
+        assert self._failure(updates).startswith("retries exhausted: HTTPError")
+
+    def test_an_earlier_attempt_does_not_mark_failed(self, monkeypatch):
+        _, updates, error = self._run(monkeypatch, post_error=_http_error(503),
+                                      stored={"notify_attempts": index.MAX_ATTEMPTS - 1})
+        assert isinstance(error, urllib.error.HTTPError) and updates == []
 
 
 class TestPostToWebhook:

@@ -19,6 +19,9 @@ const LAMBDA_ENV_LIMIT_BYTES = 4096;
 const EVENT_INPUT_LIMIT_CHARS = 8192;
 // The table name is a token at synth time; count the longest name DynamoDB allows.
 const TABLE_NAME_MAX_BYTES = 255;
+// Retries of a failed stream record. The notify Lambda gets the attempt count (retries + 1) so
+// it can mark the item failed on the last attempt.
+const NOTIFY_RETRY_ATTEMPTS = 2;
 
 /**
  * Check the optional `filter` of each notifier. Notifiers without a filter are not checked,
@@ -121,6 +124,7 @@ export class WhatsNewSummaryNotifierStack extends Stack {
       DDB_TABLE_NAME: rssHistoryTable.tableName,
       NOTIFIERS: JSON.stringify(notifiers),
       SUMMARIZERS: JSON.stringify(summarizers),
+      NOTIFY_MAX_ATTEMPTS: String(NOTIFY_RETRY_ATTEMPTS + 1),
     };
     const crawlerEnvironment = {
       DDB_TABLE_NAME: rssHistoryTable.tableName,
@@ -157,7 +161,7 @@ export class WhatsNewSummaryNotifierStack extends Stack {
         // Only new articles: the notify Lambda's own write-backs are MODIFY records
         filters: [FilterCriteria.filter({ eventName: FilterRule.isEqual('INSERT') })],
         // The notify Lambda raises only failures a retry may fix (throttling, 5xx, timeouts)
-        retryAttempts: 2,
+        retryAttempts: NOTIFY_RETRY_ATTEMPTS,
         maxRecordAge: Duration.hours(6),
         onFailure: new SqsDlq(notifyFailureQueue),
       })

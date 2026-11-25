@@ -39,6 +39,10 @@ RETRYABLE_ERROR_CODES = {
     "ModelTimeoutException",
 }
 MAX_REASON_CHARS = 500
+# Invocations a record gets: the first one plus the event source's retryAttempts
+MAX_ATTEMPTS = int(os.environ.get("NOTIFY_MAX_ATTEMPTS", "3"))
+# A record whose item already has one of these was handled; a duplicate delivery does nothing
+DONE_STATUSES = {"completed", "failed", "filtered"}
 
 
 class RetryableError(Exception):
@@ -102,10 +106,35 @@ def mark_failed(item, reason):
         ddb_table.update_item(
             Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
             UpdateExpression="SET summary_status = :st, failure_reason = :r",
+            ConditionExpression="attribute_exists(#url)",
+            ExpressionAttributeNames={"#url": "url"},
             ExpressionAttributeValues={":st": "failed", ":r": reason},
         )
     except Exception as e:  # noqa: BLE001 - the status is informational
         print(f"Failed to write the failed status to DDB: {e}")
+
+
+def start_attempt(item):
+    """Count this invocation on the item and return the item as stored after the count
+
+    Returns:
+        dict | None: The item, or None when it no longer exists. The condition keeps the
+            update from creating an item, which would reach the notify Lambda as an INSERT.
+    """
+    try:
+        response = ddb_table.update_item(
+            Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
+            UpdateExpression="ADD notify_attempts :one",
+            ConditionExpression="attribute_exists(#url)",
+            ExpressionAttributeNames={"#url": "url"},
+            ExpressionAttributeValues={":one": 1},
+            ReturnValues="ALL_NEW",
+        )
+    except ClientError as error:
+        if error.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return None
+        raise
+    return response.get("Attributes", {})
 
 
 def get_blog_content(url):
@@ -375,6 +404,8 @@ def push_notification(item_list, context=None):
                     ddb_table.update_item(
                         Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
                         UpdateExpression="SET summary_status = :st",
+                        ConditionExpression="attribute_exists(#url)",
+                        ExpressionAttributeNames={"#url": "url"},
                         ExpressionAttributeValues={":st": "filtered"},
                     )
                 except Exception as e:  # noqa: BLE001 - the status is informational
@@ -408,6 +439,8 @@ def push_notification(item_list, context=None):
             ddb_table.update_item(
                 Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
                 UpdateExpression="SET summary = :s, detail = :d, summary_status = :st, summary_source = :src, model_id = :m, latency_sec = :l, input_tokens = :it, output_tokens = :ot",
+                ConditionExpression="attribute_exists(#url)",
+                ExpressionAttributeNames={"#url": "url"},
                 ExpressionAttributeValues={
                     ":s": summary, ":d": detail, ":st": "completed", ":src": source,
                     ":m": metrics["model_id"], ":l": json.dumps(metrics["latency_sec"]),
@@ -581,20 +614,36 @@ def create_teams_message(item):
 def handler(event, context):
     """Notify about blog entries registered in DynamoDB
 
+    Each invocation first adds 1 to the item's notify_attempts and reads the item back. A record
+    whose item is gone or already has a final summary_status (a duplicate delivery) is skipped.
+
     A failure a retry may fix is raised, so the event source retries the record (2 times, then
-    the record goes to the failure queue). Any other failure is written to the item as
-    summary_status=failed with a failure_reason, and the record is finished. The event source
-    sends one record per invocation (batchSize 1), so a retry never posts another article again.
+    the record goes to the failure queue). On the last attempt the item also gets
+    summary_status=failed with a "retries exhausted" failure_reason. Any other failure is written
+    to the item as summary_status=failed with a failure_reason, and the record is finished. The
+    event source sends one record per invocation (batchSize 1), so a retry never posts another
+    article again.
 
     Args:
         event (dict): Information about the updated items notified from DynamoDB
     """
 
     for item in get_new_entries(event["Records"]):
+        attempts = 0
         try:
+            stored = start_attempt(item)
+            if stored is None:
+                print(f"skip {item['rss_link']}: the item no longer exists")
+                continue
+            if stored.get("summary_status") in DONE_STATUSES:
+                print(f"skip {item['rss_link']}: already {stored['summary_status']}")
+                continue
+            attempts = int(stored.get("notify_attempts", 1))
             push_notification([item], context)
         except Exception as error:  # classify every failure
             if is_retryable(error):
+                if attempts >= MAX_ATTEMPTS:
+                    mark_failed(item, f"retries exhausted: {type(error).__name__}: {error}")
                 print(f"Retry later: {item['rss_link']}: {error!r}")
                 raise
             traceback.print_exc()

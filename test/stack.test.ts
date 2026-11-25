@@ -174,6 +174,18 @@ describe('WhatsNewSummaryNotifierStack', () => {
     });
   });
 
+  test('notify Lambda knows its attempt limit: the retries plus the first invocation', () => {
+    const template = createStack();
+    const mapping = Object.values(template.findResources('AWS::Lambda::EventSourceMapping'))[0] as {
+      Properties: { MaximumRetryAttempts: number };
+    };
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: {
+        Variables: Match.objectLike({ NOTIFY_MAX_ATTEMPTS: String(mapping.Properties.MaximumRetryAttempts + 1) }),
+      },
+    });
+  });
+
   test('failure queue is encrypted, requires TLS and only the notify role can send to it', () => {
     const template = createStack();
     template.hasResourceProperties('AWS::SQS::Queue', {
