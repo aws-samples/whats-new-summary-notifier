@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: MIT-0
 
 import json
+import logging
 import os
 import re
 import time
-import traceback
 import urllib.error
 import urllib.request
 
@@ -15,6 +15,15 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from botocore.exceptions import ConnectionError as BotoConnectionError
 from botocore.exceptions import HTTPClientError as BotoHTTPClientError
+
+# Logs go through the standard logging module, so each line carries its level and the request ID
+# and a multi-line message (a traceback) stays one log event. The metric lines stay print: see
+# emit_metrics.
+logger = logging.getLogger()
+if not os.environ.get("AWS_LAMBDA_LOG_LEVEL"):
+    # With the TEXT log format the Python runtime sends only WARNING and above; keep INFO as print
+    # did. With the JSON log format Lambda sets AWS_LAMBDA_LOG_LEVEL and the runtime applies it.
+    logger.setLevel(logging.INFO)
 
 MODEL_IDS = json.loads(os.environ["MODEL_IDS"])
 MODEL_REGION = os.environ["MODEL_REGION"]
@@ -39,6 +48,49 @@ RETRYABLE_ERROR_CODES = {
     "ModelTimeoutException",
 }
 MAX_REASON_CHARS = 500
+# Invocations a record gets: the first one plus the event source's retryAttempts
+MAX_ATTEMPTS = int(os.environ.get("NOTIFY_MAX_ATTEMPTS", "3"))
+# A record whose item already has one of these was handled; a duplicate delivery does nothing
+DONE_STATUSES = {"completed", "failed", "filtered"}
+
+# One CloudWatch embedded metric format (EMF) line per processed record: how it ended (Notified,
+# Filtered, Failed) and what degraded on the way. The only dimension is the function name, so
+# the metric count stays at six per stack; the log lines tell which article and model.
+# Bedrock token, latency and throttle metrics are in the AWS/Bedrock namespace already.
+METRIC_NAMESPACE = "WhatsNewSummaryNotifier"
+METRIC_NAMES = ("Notified", "Filtered", "Failed", "RelevanceFailOpen", "ModelFallback", "DescriptionFallback")
+_metrics = {}
+
+
+def count(name):
+    """Set a metric of the record being processed to 1"""
+    _metrics[name] = 1
+
+
+def emit_metrics():
+    """Write the EMF line of the record being processed and reset the counts
+
+    The line stays a print: CloudWatch reads EMF only from a log event that is the JSON object
+    itself. Nothing here may fail the record.
+    """
+    try:
+        doc = {
+            "_aws": {
+                "Timestamp": int(time.time() * 1000),
+                "CloudWatchMetrics": [{
+                    "Namespace": METRIC_NAMESPACE,
+                    "Dimensions": [["FunctionName"]],
+                    "Metrics": [{"Name": n, "Unit": "Count"} for n in METRIC_NAMES],
+                }],
+            },
+            "FunctionName": os.environ.get("AWS_LAMBDA_FUNCTION_NAME", "local"),
+            **{n: _metrics.get(n, 0) for n in METRIC_NAMES},
+        }
+        print(json.dumps(doc))
+    except Exception as e:  # noqa: BLE001 - metrics are informational
+        logger.warning(f"Failed to write metrics: {e!r}")
+    finally:
+        _metrics.clear()
 
 
 class RetryableError(Exception):
@@ -89,23 +141,49 @@ def post_to_webhook(url, data):
         raise MaybePostedError(f"no answer from the webhook ({error!r}); the message may have been posted") from error
     with res:
         try:
-            print(res.read())
+            logger.info(res.read())
         except Exception as error:  # noqa: BLE001 - the status was already received, so it was posted
-            print(f"Posted, but the response body could not be read: {error!r}")
+            logger.warning(f"Posted, but the response body could not be read: {error!r}")
 
 
 def mark_failed(item, reason):
     """Record that the article was not notified and why, so a person can find it"""
     reason = reason[:MAX_REASON_CHARS]
-    print(f"ERROR: {item['rss_link']} is not notified: {reason}")
+    count("Failed")
+    logger.error(f"{item['rss_link']} is not notified: {reason}")
     try:
         ddb_table.update_item(
             Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
             UpdateExpression="SET summary_status = :st, failure_reason = :r",
+            ConditionExpression="attribute_exists(#url)",
+            ExpressionAttributeNames={"#url": "url"},
             ExpressionAttributeValues={":st": "failed", ":r": reason},
         )
     except Exception as e:  # noqa: BLE001 - the status is informational
-        print(f"Failed to write the failed status to DDB: {e}")
+        logger.error(f"Failed to write the failed status to DDB: {e}")
+
+
+def start_attempt(item):
+    """Count this invocation on the item and return the item as stored after the count
+
+    Returns:
+        dict | None: The item, or None when it no longer exists. The condition keeps the
+            update from creating an item, which would reach the notify Lambda as an INSERT.
+    """
+    try:
+        response = ddb_table.update_item(
+            Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
+            UpdateExpression="ADD notify_attempts :one",
+            ConditionExpression="attribute_exists(#url)",
+            ExpressionAttributeNames={"#url": "url"},
+            ExpressionAttributeValues={":one": 1},
+            ReturnValues="ALL_NEW",
+        )
+    except ClientError as error:
+        if error.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return None
+        raise
+    return response.get("Attributes", {})
 
 
 def get_blog_content(url):
@@ -119,7 +197,7 @@ def get_blog_content(url):
     """
     text, reason = article.get_article_text(url)
     if text is None:
-        print(f"Cannot use {url}: {reason}")
+        logger.info(f"Cannot use {url}: {reason}")
     return text
 
 
@@ -145,13 +223,13 @@ def get_bedrock_client(
     else:
         target_region = region
 
-    print(f"Create new client\n  Using region: {target_region}")
+    logger.info(f"Create new client, using region: {target_region}")
     session_kwargs = {"region_name": target_region}
     client_kwargs = {**session_kwargs}
 
     profile_name = os.environ.get("AWS_PROFILE")
     if profile_name:
-        print(f"  Using profile: {profile_name}")
+        logger.info(f"Using profile: {profile_name}")
         session_kwargs["profile_name"] = profile_name
 
     retry_config = Config(
@@ -164,12 +242,12 @@ def get_bedrock_client(
     session = boto3.Session(**session_kwargs)
 
     if assumed_role:
-        print(f"  Using role: {assumed_role}", end="")
+        logger.info(f"Using role: {assumed_role}")
         sts = session.client("sts")
         response = sts.assume_role(
             RoleArn=str(assumed_role), RoleSessionName="langchain-llm-1"
         )
-        print(" ... successful!")
+        logger.info("Assumed the role")
         client_kwargs["aws_access_key_id"] = response["Credentials"]["AccessKeyId"]
         client_kwargs["aws_secret_access_key"] = response["Credentials"][
             "SecretAccessKey"
@@ -237,7 +315,7 @@ Follow the instruction. Start your response with <output>.
 
     for i, model_id in enumerate(MODEL_IDS):
         try:
-            print(f"Trying model: {model_id}")
+            logger.info(f"Trying model: {model_id}")
             t0 = time.time()
             response = boto3_bedrock.converse(
                 modelId=model_id,
@@ -256,7 +334,7 @@ Follow the instruction. Start your response with <output>.
                 "output_tokens": usage.get("outputTokens", 0),
             }
             print(f"Model metrics: {json.dumps(metrics)}")
-            print(output_text)
+            logger.info(output_text)
             summary = re.findall(r"<summary>([\s\S]*?)</summary>", output_text)
             detail = re.findall(r"<detail>([\s\S]*?)</detail>", output_text)
             if not summary or not detail:
@@ -270,7 +348,8 @@ Follow the instruction. Start your response with <output>.
             else:
                 reason = str(error)
             if i < len(MODEL_IDS) - 1:
-                print(f"Model {model_id} failed ({reason}), falling back to next model")
+                logger.warning(f"Model {model_id} failed ({reason}), falling back to next model")
+                count("ModelFallback")
                 continue
             raise
 
@@ -282,7 +361,7 @@ def notifier_filter(notifier, key):
         return []
     values = notifier_filter.get(key, []) if isinstance(notifier_filter, dict) else None
     if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
-        print(f"Ignore filter.{key}: it must be a list of strings")
+        logger.warning(f"Ignore filter.{key}: it must be a list of strings")
         return []
     return [v for v in values if v.strip()]
 
@@ -313,7 +392,7 @@ def judge_relevance(blog_body, topics, model_ids):
                 inferenceConfig={"maxTokens": 1024},
             )
         except Exception as error:  # noqa: BLE001 - a judging error must not drop the article
-            print(f"Relevance check with {model_id} failed ({error}), trying the next model")
+            logger.warning(f"Relevance check with {model_id} failed ({error}), trying the next model")
             continue
         content = response["output"]["message"]["content"]
         output_text = "".join(block["text"] for block in content if "text" in block)
@@ -321,14 +400,43 @@ def judge_relevance(blog_body, topics, model_ids):
         usage = response.get("usage", {})
         print(f"Relevance metrics: {json.dumps({'model_id': model_id, 'input_tokens': usage.get('inputTokens', 0), 'output_tokens': usage.get('outputTokens', 0)})}")
         if len({a.lower() for a in answers}) != 1:
-            print(f"WARNING: unexpected relevance answer from {model_id}, the article is notified: {output_text[:200]!r}")
+            logger.warning(f"Unexpected relevance answer from {model_id}, the article is notified: {output_text[:200]!r}")
+            count("RelevanceFailOpen")
             return None
         return answers[0].lower() == "yes"
-    print("ERROR: the relevance check failed with every model, the article is notified")
+    logger.error("The relevance check failed with every model, the article is notified")
+    count("RelevanceFailOpen")
     return None
 
 
-def push_notification(item_list, context=None):
+PENDING_KEYS = ("summary", "detail", "summary_source", "model_id", "latency_sec", "input_tokens", "output_tokens")
+
+
+def is_pending_summary(pending):
+    """True when an earlier attempt saved a usable summary in the item's pending attribute"""
+    return isinstance(pending, dict) and all(k in pending for k in PENDING_KEYS)
+
+
+def save_pending(item, record):
+    """Keep the summary on the item before the post, so a retry posts it without summarizing again
+
+    The pending attribute is not shown by the Management Console; the completed write copies it
+    to summary and the other attributes and removes it. A failure here only means a retry
+    summarizes again, so it never stops the post.
+    """
+    try:
+        ddb_table.update_item(
+            Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
+            UpdateExpression="SET pending = :p",
+            ConditionExpression="attribute_exists(#url) AND attribute_not_exists(summary_status)",
+            ExpressionAttributeNames={"#url": "url"},
+            ExpressionAttributeValues={":p": record},
+        )
+    except Exception as e:  # noqa: BLE001 - saving only avoids summarizing again on a retry
+        logger.error(f"Failed to save the pending summary to DDB: {e}")
+
+
+def push_notification(item_list, context=None, pending=None):
     """Notify the arrival of articles
 
     Failures before the post are raised to the caller. After the webhook request is sent,
@@ -337,13 +445,16 @@ def push_notification(item_list, context=None):
     Args:
         item_list (list): List of articles to be notified
         context: The Lambda context, used to check the time left before the post
+        pending (dict): The summary an earlier attempt saved on the item, if any. With it,
+            the article is posted without fetching, judging or summarizing again.
     """
 
     for item in item_list:
         
         notifier = NOTIFIERS[item["rss_notifier_name"]]
         if item.get("rss_filter_result"):
-            print(f"skip {item['rss_link']}: {item['rss_filter_result']}")
+            logger.info(f"skip {item['rss_link']}: {item['rss_filter_result']}")
+            count("Filtered")
             continue
         webhook_url_parameter_name = notifier["webhookUrlParameterName"]
         destination = notifier["destination"]
@@ -352,42 +463,57 @@ def push_notification(item_list, context=None):
         
         item_url = item["rss_link"]
 
-        # Get the blog content. Fall back to the RSS description when the page
-        # cannot be fetched or has too little text.
-        content = get_blog_content(item_url)
-        source = "article"
-        if content is None or len(content) < article.MIN_CHARS:
-            description = article.description_text(item.get("rss_description", ""))
-            if description:
-                print(f"use the RSS description for {item_url}")
-                content, source = description, "rss_description"
-            elif content is None:
-                mark_failed(item, "no article text and no RSS description")
-                continue
+        if is_pending_summary(pending):
+            # An earlier attempt summarized the article and failed before the post
+            logger.info(f"use the summary saved by an earlier attempt for {item_url}")
+            record = dict(pending)
+        else:
+            # Get the blog content. Fall back to the RSS description when the page
+            # cannot be fetched or has too little text.
+            content = get_blog_content(item_url)
+            source = "article"
+            if content is None or len(content) < article.MIN_CHARS:
+                description = article.description_text(item.get("rss_description", ""))
+                if description:
+                    logger.info(f"use the RSS description for {item_url}")
+                    count("DescriptionFallback")
+                    content, source = description, "rss_description"
+                elif content is None:
+                    mark_failed(item, "no article text and no RSS description")
+                    continue
 
-        # Optional topic filter: skip only on a clear "no"
-        topics = notifier_filter(notifier, "topics")
-        if topics:
-            relevant = judge_relevance(content, topics, notifier_filter(notifier, "modelIds") or MODEL_IDS)
-            if relevant is False:
-                print(f"skip {item_url}: not about the notifier's topics")
-                try:
-                    ddb_table.update_item(
-                        Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
-                        UpdateExpression="SET summary_status = :st",
-                        ExpressionAttributeValues={":st": "filtered"},
-                    )
-                except Exception as e:  # noqa: BLE001 - the status is informational
-                    print(f"Failed to write the filtered status to DDB: {e}")
-                continue
+            # Optional topic filter: skip only on a clear "no"
+            topics = notifier_filter(notifier, "topics")
+            if topics:
+                relevant = judge_relevance(content, topics, notifier_filter(notifier, "modelIds") or MODEL_IDS)
+                if relevant is False:
+                    logger.info(f"skip {item_url}: not about the notifier's topics")
+                    count("Filtered")
+                    try:
+                        ddb_table.update_item(
+                            Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
+                            UpdateExpression="SET summary_status = :st",
+                            ConditionExpression="attribute_exists(#url)",
+                            ExpressionAttributeNames={"#url": "url"},
+                            ExpressionAttributeValues={":st": "filtered"},
+                        )
+                    except Exception as e:  # noqa: BLE001 - the status is informational
+                        logger.error(f"Failed to write the filtered status to DDB: {e}")
+                    continue
 
-        # Summarize the blog
-        summarizer = SUMMARIZERS[notifier["summarizerName"]]
-        summary, detail, metrics = summarize_blog(content, language=summarizer["outputLanguage"], persona=summarizer["persona"])
+            # Summarize the blog
+            summarizer = SUMMARIZERS[notifier["summarizerName"]]
+            summary, detail, metrics = summarize_blog(content, language=summarizer["outputLanguage"], persona=summarizer["persona"])
+            record = {
+                "summary": summary, "detail": detail, "summary_source": source,
+                "model_id": metrics["model_id"], "latency_sec": json.dumps(metrics["latency_sec"]),
+                "input_tokens": metrics["input_tokens"], "output_tokens": metrics["output_tokens"],
+            }
+            save_pending(item, record)
 
         # Add the summary text to notified message
-        item["summary"] = summary
-        item["detail"] = detail
+        item["summary"] = record["summary"]
+        item["detail"] = record["detail"]
 
         if destination == "teams":
             item["detail"] = item["detail"].replace("。\n", "。\r")
@@ -400,22 +526,25 @@ def push_notification(item_list, context=None):
         encoded_msg = json.dumps(msg).encode("utf-8")
         if context is not None and context.get_remaining_time_in_millis() < MIN_POST_TIME_MS:
             raise RetryableError("not enough time left in this invocation to post")
-        print(f"push_msg:{item}")
+        logger.info(f"push_msg:{item}")
         post_to_webhook(app_webhook_url, encoded_msg)
+        count("Notified")
 
         # Posted. Nothing below may raise: a retry would post the article again.
         try:
             ddb_table.update_item(
                 Key={"url": item["rss_link"], "notifier_name": item["rss_notifier_name"]},
-                UpdateExpression="SET summary = :s, detail = :d, summary_status = :st, summary_source = :src, model_id = :m, latency_sec = :l, input_tokens = :it, output_tokens = :ot",
+                UpdateExpression="SET summary = :s, detail = :d, summary_status = :st, summary_source = :src, model_id = :m, latency_sec = :l, input_tokens = :it, output_tokens = :ot REMOVE pending",
+                ConditionExpression="attribute_exists(#url)",
+                ExpressionAttributeNames={"#url": "url"},
                 ExpressionAttributeValues={
-                    ":s": summary, ":d": detail, ":st": "completed", ":src": source,
-                    ":m": metrics["model_id"], ":l": json.dumps(metrics["latency_sec"]),
-                    ":it": metrics["input_tokens"], ":ot": metrics["output_tokens"],
+                    ":s": record["summary"], ":d": record["detail"], ":st": "completed", ":src": record["summary_source"],
+                    ":m": record["model_id"], ":l": record["latency_sec"],
+                    ":it": record["input_tokens"], ":ot": record["output_tokens"],
                 },
             )
         except Exception as e:  # noqa: BLE001 - the article was posted; the summary is informational
-            print(f"Failed to write summary to DDB: {e}")
+            logger.error(f"Failed to write summary to DDB: {e}")
         time.sleep(0.5)
 
 
@@ -428,7 +557,7 @@ def get_new_entries(blog_entries):
 
     res_list = []
     for entry in blog_entries:
-        print(entry)
+        logger.info(entry)
         if entry["eventName"] == "INSERT":
             new_data = {
                 "rss_category": entry["dynamodb"]["NewImage"]["category"]["S"],
@@ -439,10 +568,10 @@ def get_new_entries(blog_entries):
                 "rss_filter_result": entry["dynamodb"]["NewImage"].get("filter_result", {}).get("S", ""),
                 "rss_description": entry["dynamodb"]["NewImage"].get("rss_description", {}).get("S", ""),
             }
-            print(new_data)
+            logger.info(new_data)
             res_list.append(new_data)
         else:  # Do not notify for REMOVE or UPDATE events
-            print("skip REMOVE or UPDATE event")
+            logger.info("skip REMOVE or UPDATE event")
     return res_list
 
 
@@ -581,21 +710,40 @@ def create_teams_message(item):
 def handler(event, context):
     """Notify about blog entries registered in DynamoDB
 
+    Each invocation first adds 1 to the item's notify_attempts and reads the item back. A record
+    whose item is gone or already has a final summary_status (a duplicate delivery) is skipped.
+    A summary saved in the item's pending attribute by an earlier attempt is posted as it is.
+
     A failure a retry may fix is raised, so the event source retries the record (2 times, then
-    the record goes to the failure queue). Any other failure is written to the item as
-    summary_status=failed with a failure_reason, and the record is finished. The event source
-    sends one record per invocation (batchSize 1), so a retry never posts another article again.
+    the record goes to the failure queue). On the last attempt the item also gets
+    summary_status=failed with a "retries exhausted" failure_reason. Any other failure is written
+    to the item as summary_status=failed with a failure_reason, and the record is finished. The
+    event source sends one record per invocation (batchSize 1), so a retry never posts another
+    article again.
 
     Args:
         event (dict): Information about the updated items notified from DynamoDB
     """
 
     for item in get_new_entries(event["Records"]):
+        attempts = 0
         try:
-            push_notification([item], context)
+            stored = start_attempt(item)
+            if stored is None:
+                logger.info(f"skip {item['rss_link']}: the item no longer exists")
+                continue
+            if stored.get("summary_status") in DONE_STATUSES:
+                logger.info(f"skip {item['rss_link']}: already {stored['summary_status']}")
+                continue
+            attempts = int(stored.get("notify_attempts", 1))
+            push_notification([item], context, stored.get("pending"))
         except Exception as error:  # classify every failure
             if is_retryable(error):
-                print(f"Retry later: {item['rss_link']}: {error!r}")
+                if attempts >= MAX_ATTEMPTS:
+                    mark_failed(item, f"retries exhausted: {type(error).__name__}: {error}")
+                logger.warning(f"Retry later: {item['rss_link']}: {error!r}")
                 raise
-            traceback.print_exc()
+            logger.exception(f"Failed to notify {item['rss_link']}")
             mark_failed(item, f"{type(error).__name__}: {error}")
+        finally:
+            emit_metrics()
