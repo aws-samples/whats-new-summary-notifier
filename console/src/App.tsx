@@ -7,7 +7,10 @@ type Stack = {
   outputs: { OutputKey: string; OutputValue: string }[];
   tags: { Key: string; Value: string }[];
   envVars: Record<string, string>;
+  alarms?: AlarmSettings;
 };
+// The stack's optional `alarms` setting (see DEPLOY.md, "Alarm notifications")
+type AlarmSettings = { email?: string; topicArn?: string };
 type DdbItem = Record<string, any>;
 type DeployMode = 'new' | 'update' | 'destroy' | null;
 type BuildInfo = {
@@ -68,7 +71,8 @@ export function App() {
     modelRegion: string; modelIds: string[];
     notifiers: Record<string, NotifierConfig>;
     summarizers: Record<string, SummarizerConfig>;
-  }>({ modelRegion: '', modelIds: [], notifiers: {}, summarizers: {} });
+    alarms: AlarmSettings;
+  }>({ modelRegion: '', modelIds: [], notifiers: {}, summarizers: {}, alarms: {} });
   const [destroyConfirm, setDestroyConfirm] = useState('');
   const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null);
   const [buildMinimized, setBuildMinimized] = useState(false);
@@ -182,6 +186,8 @@ export function App() {
     if (g.modelIds.length) obj.modelIds = g.modelIds;
     if (Object.keys(g.notifiers).length) obj.notifiers = g.notifiers;
     if (Object.keys(g.summarizers).length) obj.summarizers = g.summarizers;
+    const alarms = Object.fromEntries(Object.entries(g.alarms).filter(([, v]) => v));
+    if (Object.keys(alarms).length) obj.alarms = alarms;
     return JSON.stringify(obj, null, 2);
   };
 
@@ -193,6 +199,7 @@ export function App() {
         modelIds: Array.isArray(p.modelIds) ? p.modelIds : p.modelIds ? [p.modelIds] : [],
         notifiers: p.notifiers ?? {},
         summarizers: p.summarizers ?? {},
+        alarms: p.alarms && typeof p.alarms === 'object' ? p.alarms : {},
       });
       setConfigError('');
     } catch { setConfigError('Invalid JSON'); }
@@ -252,6 +259,8 @@ export function App() {
       else if (env['LANGUAGE']) {
         config.summarizers = { default: { outputLanguage: env['LANGUAGE'], persona: env['PERSONA'] ?? '' } };
       }
+      // Keep the alarm notifications the stack was deployed with: an update without them removes them
+      if (stack.alarms && Object.keys(stack.alarms).length) config.alarms = stack.alarms;
       const json = JSON.stringify(config, null, 2);
       setConfigJson(json);
       jsonToGui(json);
@@ -270,7 +279,7 @@ export function App() {
       setDeployForm({ tenant: '', destination: 'slack', language: 'japanese', webhookUrl: '', deployRegion: '', skipSsm: false, ssmParamName: '' });
       setExistingSsmParams([]);
       setConfigJson('');
-      setGuiConfig({ modelRegion: '', modelIds: [], notifiers: {}, summarizers: {} });
+      setGuiConfig({ modelRegion: '', modelIds: [], notifiers: {}, summarizers: {}, alarms: {} });
     }
   };
 
@@ -813,6 +822,28 @@ export function App() {
                         ))}
                         <button onClick={() => updateGui({ notifiers: { ...guiConfig.notifiers, [`Notifier${Object.keys(guiConfig.notifiers).length + 1}`]: { destination: 'slack', summarizerName: Object.keys(guiConfig.summarizers)[0] ?? 'default', webhookUrlParameterName: '/WhatsNew/URL', rssUrl: { "What's new": 'https://aws.amazon.com/about-aws/whats-new/recent/feed/' } } } })}
                           className="text-xs text-blue-600 hover:text-blue-800">+ Add notifier</button>
+                      </fieldset>
+
+                      {/* Alarm notifications (optional) */}
+                      <fieldset className="border border-gray-200 rounded-lg p-3 space-y-2">
+                        <legend className="text-xs font-semibold text-gray-600 px-1">🚨 Alarm notifications (optional)</legend>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label htmlFor="alarm-email" className="block text-xs text-gray-600 mb-1">Email</label>
+                            <input id="alarm-email" type="email" value={guiConfig.alarms.email ?? ''} disabled={!!guiConfig.alarms.topicArn}
+                              onChange={(e) => updateGui({ alarms: { email: e.target.value } })}
+                              className="w-full border border-gray-300 rounded px-2 py-1 text-xs disabled:bg-gray-100" placeholder="ops@example.com" />
+                          </div>
+                          <div>
+                            <label htmlFor="alarm-topic" className="block text-xs text-gray-600 mb-1">or an existing SNS topic ARN</label>
+                            <input id="alarm-topic" value={guiConfig.alarms.topicArn ?? ''} disabled={!!guiConfig.alarms.email}
+                              onChange={(e) => updateGui({ alarms: { topicArn: e.target.value } })}
+                              className="w-full border border-gray-300 rounded px-2 py-1 text-xs font-mono disabled:bg-gray-100" placeholder="arn:aws:sns:<region>:<account>:<topic>" />
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-500">
+                          Leave both empty for no notifications. With an email, confirm the subscription email SNS sends after the deploy.
+                        </p>
                       </fieldset>
                     </div>
                   ) : (
