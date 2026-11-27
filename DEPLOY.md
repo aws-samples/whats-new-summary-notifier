@@ -35,6 +35,8 @@ bash deploy.sh
 
 The interactive wizard will ask for notification destination, language, and Webhook URL. Deployment runs via AWS CodeBuild (Docker and Node.js are handled automatically).
 
+If you deployed before the stack created its own log groups, an update moves the Lambda logs to two new log groups whose names start with the stack name (see [Lambda logs](#lambda-logs)). The old `/aws/lambda/...` log groups stay and get no new events; their events expire after 14 days. Metric filters, subscription filters, and saved Logs Insights queries on the old log groups stop matching new logs, so point them at the new log groups.
+
 #### Non-Interactive Mode
 
 ```bash
@@ -42,6 +44,7 @@ bash deploy.sh --non-interactive \
   --webhook-url "https://hooks.slack.com/..." \
   --destination slack \
   --language japanese
+  # optional: --alarm-email ops@example.com  (see "Alarm notifications")
 ```
 
 ## Multi-Tenant Deployment
@@ -185,7 +188,45 @@ Some failures before the post may not happen again on a later attempt: Bedrock t
 
 Any other failure (no text to summarize, a webhook 4xx, no access to the model) is written to the DynamoDB item as `summary_status` = `failed` with a `failure_reason`, and the article is not retried. When the webhook request was sent but no answer came back within 10 seconds, the article is also marked `failed`, because it may already have been posted. A retry never posts an article twice.
 
-When the retries do not help, Lambda sends a message about the failed stream record (not the article itself) to the SQS queue whose name contains `NotifyFailureQueue`, which keeps messages for 14 days. The stack creates two CloudWatch alarms without actions: one when that queue has a message, and one when the notify Lambda is more than 30 minutes behind the stream (`IteratorAge`). To be told, add an action such as an SNS topic to the alarms in CloudWatch. To find articles that were not posted, look for items whose `summary_status` is `failed`, or is not set on an item without a `filter_result`.
+When the retries do not help, Lambda sends a message about the failed stream record (not the article itself) to the SQS queue whose name contains `NotifyFailureQueue`, which keeps messages for 14 days. The stack creates two CloudWatch alarms: one when that queue has a message, and one when the notify Lambda is more than 30 minutes behind the stream (`IteratorAge`). They have no actions unless you set `alarms` (see "Alarm notifications"). To find articles that were not posted, look for items whose `summary_status` is `failed`, or is not set on an item without a `filter_result`.
+
+### Alarm notifications (optional)
+Without `alarms`, the stack's CloudWatch alarms have no actions and nobody is told when they go into ALARM. Add `alarms` to `cdk.json` (or to a tenant config file) to send an email, or a message to your own SNS topic, when any of the stack's alarms goes into ALARM and when it returns to OK:
+
+```json
+"alarms": { "email": "ops@example.com" }
+```
+
+```json
+"alarms": { "topicArn": "arn:aws:sns:us-east-1:<account ID>:my-alarm-topic" }
+```
+
+| Key | Description |
+|---|---|
+| `email` | The stack creates an SNS topic and an email subscription to it. The topic only accepts requests over TLS and only lets CloudWatch alarms of this account publish to it. It is not encrypted at rest: CloudWatch alarms cannot publish to a topic encrypted with the AWS managed key `alias/aws/sns`, and the notifications carry alarm names, states and thresholds only |
+| `topicArn` | An existing SNS standard topic in the stack's Region (for example one that forwards to Slack with Amazon Q Developer in chat applications). The stack only adds it to the alarms' actions and does not change the topic or its policy, so the topic policy must let `cloudwatch.amazonaws.com` publish. Use this for a topic encrypted with a customer managed key; the key policy must also let `cloudwatch.amazonaws.com` use `kms:Decrypt` and `kms:GenerateDataKey*` |
+| `noNewEntriesDays` | Also create an alarm that goes into ALARM when no new article reached the notify Lambda for this many days in a row (1 to 7). It counts the articles of all notifiers of the stack together, so it does not tell which feed stopped. It catches what the crawler alarm cannot: a feed whose updated date is more than 7 days old and is skipped, a moved feed, a disabled schedule rule. A new alarm waits 2 days before it evaluates, so a new stack is not in ALARM before its first crawl. What's New has new articles almost every day; for feeds with quiet weeks, leave it out or use a larger number |
+
+Set `email` or `topicArn`, not both; `noNewEntriesDays` works with either of them, or alone (the alarm then has no actions). `cdk synth` stops with a message when the value has the wrong shape or the topic is in another Region. With `deploy.sh`, pass `--alarm-email <address>` or `--alarm-topic-arn <ARN>` (the interactive wizard also asks for an email) and optionally `--no-new-entries-days <N>`; the script sends them to the build as `alarms`. Pass the same options on every update: an update without it removes the notifications. The Management Console has an "Alarm notifications" section in the GUI editor, and an update pre-fills it with the setting the stack was deployed with.
+
+- **Confirm the subscription.** After the deploy, SNS sends a confirmation email to the address. Nothing is delivered until someone clicks the link in it (check the spam folder). SNS deletes a subscription that is not confirmed within 48 hours. Deploying again with the same address does not send a new confirmation email, because the stack's subscription resource has not changed: change `email` to another value (or remove it) and deploy, then set it back and deploy again, or subscribe the address again in the SNS console (that subscription is then outside the stack).
+- **Test it.** After confirming, `aws cloudwatch set-alarm-state --alarm-name <alarm name> --state-value ALARM --state-reason test` sends one notification; the alarm returns to its real state at the next evaluation.
+- **Actions added by hand.** Without `alarms`, the update does not change the existing alarms, so an action you added in the CloudWatch console stays. Once you set `alarms`, CloudFormation rewrites the alarms with the stack's actions only, and an action added by hand is removed: put that topic in `topicArn` instead.
+- **Do not commit an email address to a public fork.** Put `alarms` in a tenant config file that you do not commit (`cdk deploy -c config=tenants/myteam.json`), or pass it on the command line: `cdk deploy -c alarms='{"email":"ops@example.com"}'`.
+
+### Lambda logs
+Each Lambda function writes to a log group that the stack creates and keeps for 14 days. CloudFormation names it: `<stack name>-NotifyNewEntryLogGroup...` for the notify Lambda and `<stack name>-NewsCrawlerLogGroup...` for the crawler. To find them:
+
+```bash
+aws logs describe-log-groups --log-group-name-prefix WhatsNewSummaryNotifier --query 'logGroups[].logGroupName'
+```
+
+For 14 days after an update from an earlier version, older events are still in `/aws/lambda/<stack name>-NotifyNewEntry...` and `/aws/lambda/<stack name>-newsCrawler...`. Select both log groups in Logs Insights to search across the update.
+
+### When a crawl fails
+The crawler reads every RSS feed of a notifier, then fails when any feed could not be fetched or parsed, has no updated date, or an article could not be written to DynamoDB (an article that is already stored is not a failure). Lambda retries a failed crawl twice, 1 and then 2 more minutes later, and then drops it. The next hourly crawl reads the last 7 days of the feed again, so no article is lost when the problem is fixed within a few days.
+
+The stack's alarm on the crawler's `AsyncEventsDropped` metric goes into ALARM when a crawl is dropped (it has actions only when you set `alarms`). Search the crawler's log group for `ERROR: RSS` to see which feed failed and why. Before this alarm was added, such a crawl ended without an error: if one of your feeds is already broken, the alarm goes into ALARM soon after the update.
 
 ## Destroy
 
@@ -207,7 +248,8 @@ Deleting the stack does not delete everything. These resources stay in the accou
 | Resource | Name | Why it stays |
 |---|---|---|
 | DynamoDB table (the RSS history) | `<stack name>-WhatsNewRSSHistory...` | The table uses the CDK default removal policy `RETAIN`, so CloudFormation skips it (`DELETE_SKIPPED`) |
-| Lambda log groups (3) | `/aws/lambda/<stack name>-NotifyNewEntry...`, `-newsCrawler...`, `-LogRetention...` | The functions set `logRetention`; CDK creates these log groups outside the stack, so they are not deleted with it |
+| Lambda log groups (2) | `<stack name>-NotifyNewEntryLogGroup...`, `<stack name>-NewsCrawlerLogGroup...` | Their removal policy keeps the logs when the stack is deleted (`DELETE_SKIPPED`) |
+| Older Lambda log groups (3, only for stacks first deployed before the stack created its own log groups) | `/aws/lambda/<stack name>-NotifyNewEntry...`, `-newsCrawler...`, `-LogRetention...` | They were created outside the stack by the earlier `logRetention` setting |
 | CodeBuild log group | `/aws/codebuild/whats-new-summary-notifier[-<tenant>]` | CodeBuild creates it; `deploy.sh` deletes the project but not its logs |
 | CDKToolkit stack and its assets bucket | `CDKToolkit`, `cdk-hnb659fds-assets-<account>-<region>` | Created by `cdk bootstrap` and shared by every CDK app in the account and Region. Deleting CDKToolkit also keeps the bucket (`DELETE_SKIPPED`) |
 
@@ -219,6 +261,7 @@ aws dynamodb list-tables --query "TableNames[?contains(@, 'WhatsNewRSSHistory')]
 aws dynamodb delete-table --table-name <table name>
 
 # Log groups
+aws logs describe-log-groups --log-group-name-prefix WhatsNewSummaryNotifier --query 'logGroups[].logGroupName'
 aws logs describe-log-groups --log-group-name-prefix /aws/lambda/WhatsNewSummaryNotifier --query 'logGroups[].logGroupName'
 aws logs describe-log-groups --log-group-name-prefix /aws/codebuild/whats-new-summary-notifier --query 'logGroups[].logGroupName'
 aws logs delete-log-group --log-group-name <log group name>

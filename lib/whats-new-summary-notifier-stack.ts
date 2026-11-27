@@ -1,5 +1,5 @@
 import { Construct } from 'constructs';
-import { Stack, StackProps, Duration, CfnOutput } from 'aws-cdk-lib';
+import { Stack, StackProps, Duration, CfnOutput, RemovalPolicy, ArnFormat, Token } from 'aws-cdk-lib';
 import { Table, AttributeType, BillingMode, StreamViewType } from 'aws-cdk-lib/aws-dynamodb';
 import { Rule, Schedule, RuleTargetInput, CronOptions } from 'aws-cdk-lib/aws-events';
 import { LambdaFunction } from 'aws-cdk-lib/aws-events-targets';
@@ -7,9 +7,13 @@ import { Role, Policy, ServicePrincipal, PolicyStatement, Effect } from 'aws-cdk
 import { Runtime, StartingPosition, FilterCriteria, FilterRule } from 'aws-cdk-lib/aws-lambda';
 import { DynamoEventSource, SqsDlq } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Queue, QueueEncryption } from 'aws-cdk-lib/aws-sqs';
-import { Alarm, ComparisonOperator, TreatMissingData } from 'aws-cdk-lib/aws-cloudwatch';
+import { Alarm, CfnAlarm, ComparisonOperator, TreatMissingData } from 'aws-cdk-lib/aws-cloudwatch';
+import { SnsAction } from 'aws-cdk-lib/aws-cloudwatch-actions';
+import { ITopic, Topic } from 'aws-cdk-lib/aws-sns';
+import { EmailSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
+import { NagSuppressions } from 'cdk-nag';
 import { PythonFunction } from '@aws-cdk/aws-lambda-python-alpha';
-import { RetentionDays } from 'aws-cdk-lib/aws-logs';
+import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { StringParameter } from 'aws-cdk-lib/aws-ssm';
 import * as path from 'path';
 
@@ -56,6 +60,68 @@ export function validateNotifierFilters(notifiers: Record<string, Record<string,
   }
 }
 
+export interface AlarmSettings {
+  topicArn?: string;
+  email?: string;
+  noNewEntriesDays?: number;
+}
+
+const ALARM_KEYS = ['topicArn', 'email', 'noNewEntriesDays'];
+const SNS_TOPIC_ARN = /^arn:aws[a-z-]*:sns:([a-z0-9-]+):(\d{12}):[A-Za-z0-9_-]{1,256}$/;
+const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+/**
+ * Read the optional `alarms` context: where the stack's alarms send their ALARM and OK
+ * notifications. Without it the alarms have no actions, as before.
+ *
+ * `-c alarms='{...}'` on the cdk command line passes the value as a string, so a JSON
+ * string is accepted as well as an object.
+ */
+export function parseAlarmSettings(value: unknown, region: string): AlarmSettings | undefined {
+  if (value === undefined || value === null) return undefined;
+  let settings = value;
+  if (typeof settings === 'string') {
+    try {
+      settings = JSON.parse(settings);
+    } catch {
+      throw new Error('alarms must be a JSON object');
+    }
+  }
+  if (typeof settings !== 'object' || settings === null || Array.isArray(settings)) {
+    throw new Error('alarms must be an object');
+  }
+  const s = settings as Record<string, unknown>;
+  for (const key of Object.keys(s)) {
+    if (!ALARM_KEYS.includes(key)) throw new Error(`alarms.${key} is not a known setting (${ALARM_KEYS.join(', ')})`);
+  }
+  const { topicArn, email, noNewEntriesDays } = s;
+  if (topicArn !== undefined && email !== undefined) {
+    throw new Error('alarms.topicArn and alarms.email cannot both be set');
+  }
+  const result: AlarmSettings = {};
+  if (topicArn !== undefined) {
+    const m = typeof topicArn === 'string' ? SNS_TOPIC_ARN.exec(topicArn) : null;
+    if (!m) throw new Error('alarms.topicArn must be the ARN of an SNS standard topic');
+    // CloudWatch alarms publish only to a topic in their own Region
+    if (!Token.isUnresolved(region) && m[1] !== region) {
+      throw new Error(`alarms.topicArn is in ${m[1]}; use a topic in the stack's Region (${region})`);
+    }
+    result.topicArn = m[0];
+  }
+  if (email !== undefined) {
+    if (typeof email !== 'string' || !EMAIL.test(email)) throw new Error('alarms.email must be an email address');
+    result.email = email;
+  }
+  if (noNewEntriesDays !== undefined) {
+    // A daily period over N periods; CloudWatch allows at most 7 days for period x periods
+    if (typeof noNewEntriesDays !== 'number' || !Number.isInteger(noNewEntriesDays) || noNewEntriesDays < 1 || noNewEntriesDays > 7) {
+      throw new Error('alarms.noNewEntriesDays must be a whole number of days from 1 to 7');
+    }
+    result.noNewEntriesDays = noNewEntriesDays;
+  }
+  return Object.keys(result).length ? result : undefined;
+}
+
 export class WhatsNewSummaryNotifierStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
@@ -69,6 +135,7 @@ export class WhatsNewSummaryNotifierStack extends Stack {
 
     const notifiers = this.node.tryGetContext('notifiers');
     const summarizers: [] = this.node.tryGetContext('summarizers');
+    const alarmSettings = parseAlarmSettings(this.node.tryGetContext('alarms'), region);
 
     // Role for Lambda Function to post new entries written to DynamoDB to Slack or Microsoft Teams
     const notifyNewEntryRole = new Role(this, 'NotifyNewEntryRole', {
@@ -128,6 +195,17 @@ export class WhatsNewSummaryNotifierStack extends Stack {
     };
     validateNotifierFilters(notifiers, [notifyEnvironment, crawlerEnvironment]);
 
+    // Log groups that the stack owns. CloudFormation names them (<stack name>-<id>-<suffix>):
+    // a deployment made with the old logRetention setting already has /aws/lambda/<function
+    // name>, so reusing that name would fail on update. RETAIN_ON_UPDATE_OR_DELETE keeps the logs
+    // when the stack is deleted, and deletes a log group only when the update that created it
+    // is rolled back.
+    const newLogGroup = (id: string) =>
+      new LogGroup(this, id, {
+        retention: RetentionDays.TWO_WEEKS,
+        removalPolicy: RemovalPolicy.RETAIN_ON_UPDATE_OR_DELETE,
+      });
+
     // Lambda Function to post new entries written to DynamoDB to Slack or Microsoft Teams
     const notifyNewEntry = new PythonFunction(this, 'NotifyNewEntry', {
       runtime: Runtime.PYTHON_3_15,
@@ -135,7 +213,7 @@ export class WhatsNewSummaryNotifierStack extends Stack {
       handler: 'handler',
       index: 'index.py',
       timeout: Duration.seconds(180),
-      logRetention: RetentionDays.TWO_WEEKS,
+      logGroup: newLogGroup('NotifyNewEntryLogGroup'),
       role: notifyNewEntryRole,
       reservedConcurrentExecutions: 1,
       environment: notifyEnvironment,
@@ -163,17 +241,18 @@ export class WhatsNewSummaryNotifierStack extends Stack {
       })
     );
 
-    // Alarms without actions: add an action (for example an SNS topic) in CloudWatch if you
-    // want to be told. IteratorAge is how far the notify Lambda is behind the stream.
-    new Alarm(this, 'NotifyIteratorAgeAlarm', {
+    // Every alarm goes in this list; the optional `alarms` setting adds its actions at the end.
+    // IteratorAge is how far the notify Lambda is behind the stream.
+    const alarms: Alarm[] = [];
+    alarms.push(new Alarm(this, 'NotifyIteratorAgeAlarm', {
       alarmDescription: 'The notify Lambda is more than 30 minutes behind the DynamoDB stream',
       metric: notifyNewEntry.metric('IteratorAge', { statistic: 'Maximum', period: Duration.minutes(5) }),
       threshold: Duration.minutes(30).toMilliseconds(),
       evaluationPeriods: 1,
       comparisonOperator: ComparisonOperator.GREATER_THAN_THRESHOLD,
       treatMissingData: TreatMissingData.NOT_BREACHING,
-    });
-    new Alarm(this, 'NotifyFailureQueueAlarm', {
+    }));
+    alarms.push(new Alarm(this, 'NotifyFailureQueueAlarm', {
       alarmDescription: 'Articles were not notified after the retries; see the NotifyFailureQueue messages',
       metric: notifyFailureQueue.metricApproximateNumberOfMessagesVisible({
         statistic: 'Maximum',
@@ -183,7 +262,7 @@ export class WhatsNewSummaryNotifierStack extends Stack {
       evaluationPeriods: 1,
       comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
       treatMissingData: TreatMissingData.NOT_BREACHING,
-    });
+    }));
 
     // Allow writing to DynamoDB
     rssHistoryTable.grantWriteData(newsCrawlerRole);
@@ -196,10 +275,47 @@ export class WhatsNewSummaryNotifierStack extends Stack {
       handler: 'handler',
       index: 'index.py',
       timeout: Duration.seconds(60),
-      logRetention: RetentionDays.TWO_WEEKS,
+      logGroup: newLogGroup('NewsCrawlerLogGroup'),
       role: newsCrawlerRole,
       environment: crawlerEnvironment,
     });
+
+    // A crawl that fails is retried twice by Lambda's asynchronous queue and then dropped. The
+    // next hourly crawl reads the same 7 days again, so a dropped crawl loses nothing unless the
+    // failure goes on, which this alarm shows.
+    alarms.push(
+      new Alarm(this, 'CrawlerDroppedAlarm', {
+        alarmDescription:
+          'A crawl failed 3 times and was dropped: an RSS feed could not be read or an article could not be written. Search the newsCrawler log group for "ERROR: RSS"',
+        metric: newsCrawler.metric('AsyncEventsDropped', { statistic: 'Sum', period: Duration.hours(1) }),
+        threshold: 1,
+        evaluationPeriods: 1,
+        comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        treatMissingData: TreatMissingData.NOT_BREACHING,
+      })
+    );
+
+    // Optional: no new article reached the notify Lambda for N days. It only receives INSERT
+    // records, so its invocations count new articles (plus retries), for all notifiers together.
+    const noNewEntriesDays = alarmSettings?.noNewEntriesDays;
+    if (noNewEntriesDays) {
+      const noNewEntries = new Alarm(this, 'NoNewEntriesAlarm', {
+        alarmDescription: `No new article reached the notify Lambda for ${noNewEntriesDays} days: check the crawler logs, the EventBridge rules and the RSS feeds`,
+        metric: notifyNewEntry.metric('Invocations', { statistic: 'Sum', period: Duration.days(1) }),
+        threshold: 1,
+        evaluationPeriods: noNewEntriesDays,
+        datapointsToAlarm: noNewEntriesDays,
+        comparisonOperator: ComparisonOperator.LESS_THAN_THRESHOLD,
+        // A day without invocations has no data point; count it as a day without articles
+        treatMissingData: TreatMissingData.BREACHING,
+      });
+      // The L2 Alarm has no warm-up yet. Wait 2 days (the most CloudWatch allows) after the alarm
+      // is created, so a new stack is not in ALARM before its first crawl.
+      (noNewEntries.node.defaultChild as CfnAlarm).addPropertyOverride('WarmUpConfiguration', {
+        WarmUpPeriodDurationInMinutes: 2880,
+      });
+      alarms.push(noNewEntries);
+    }
 
     for (const notifierName in notifiers) {
       const notifier = notifiers[notifierName];
@@ -237,6 +353,54 @@ export class WhatsNewSummaryNotifierStack extends Stack {
           retryAttempts: 2,
         })
       );
+    }
+
+    // Optional alarm notifications. Without the `alarms` setting nothing below is created and
+    // the alarms keep no actions, so an action added by hand in CloudWatch stays in place.
+    let alarmTopic: ITopic | undefined;
+    if (alarmSettings?.topicArn) {
+      alarmTopic = Topic.fromTopicArn(this, 'AlarmTopic', alarmSettings.topicArn);
+    } else if (alarmSettings?.email) {
+      // No encryption at rest: CloudWatch alarms cannot publish to a topic encrypted with the
+      // AWS managed key (alias/aws/sns). Use alarms.topicArn for a topic encrypted with a
+      // customer managed key. The notifications carry alarm names and states only.
+      const topic = new Topic(this, 'AlarmTopic', { enforceSSL: true });
+      topic.addToResourcePolicy(
+        new PolicyStatement({
+          sid: 'AllowCloudWatchAlarmsOfThisAccount',
+          effect: Effect.ALLOW,
+          principals: [new ServicePrincipal('cloudwatch.amazonaws.com')],
+          actions: ['sns:Publish'],
+          resources: [topic.topicArn],
+          conditions: {
+            StringEquals: { 'aws:SourceAccount': accountId },
+            ArnLike: {
+              'aws:SourceArn': this.formatArn({
+                service: 'cloudwatch',
+                resource: 'alarm',
+                resourceName: '*',
+                arnFormat: ArnFormat.COLON_RESOURCE_NAME,
+              }),
+            },
+          },
+        })
+      );
+      topic.addSubscription(new EmailSubscription(alarmSettings.email));
+      NagSuppressions.addResourceSuppressions(topic, [
+        {
+          id: 'AwsSolutions-SNS2',
+          reason:
+            'Alarm notifications carry no article or secret. CloudWatch alarms cannot publish to a topic encrypted with alias/aws/sns; use alarms.topicArn for a topic encrypted with a customer managed key.',
+        },
+      ]);
+      alarmTopic = topic;
+    }
+    if (alarmTopic) {
+      const action = new SnsAction(alarmTopic);
+      for (const alarm of alarms) {
+        alarm.addAlarmAction(action);
+        alarm.addOkAction(action);
+      }
     }
 
     new CfnOutput(this, 'CommitHash', { value: commitHash });

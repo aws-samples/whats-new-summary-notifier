@@ -3,7 +3,7 @@
 Whats New Summary Notifier は、AWS What's New などの Web 記事の RSS フィードを定期的にクロールし、Amazon Bedrock で記事内容を要約して Slack、Microsoft Teams、Google Chat（preview）に通知する生成 AI アプリケーション。
 
 ## 主要機能
-- RSS フィードの定期クロール（EventBridge スケジュール）
+- RSS フィードの定期クロール（EventBridge スケジュール）。notifier のフィードをすべて読んでから、取得・解析できない・更新日が無い・DynamoDB に書けない（重複以外）フィードがあればまとめて例外にする（Lambda の非同期の再試行 2 回のあと捨てられ、`AsyncEventsDropped` のアラームが鳴る）。任意の `alarms.noNewEntriesDays`（1〜7）で、通知 Lambda の起動が N 日続けて 0 のときのアラーム（評価前の待ち 2 日）
 - 新着記事の DynamoDB への記録（重複排除付き）
 - DynamoDB Streams トリガーによる記事本文の取得・要約・通知（`<main>` → `<article>` → `<body>` の順に本文を探し、取れないときは RSS の説明文で要約。取得先は公開の http(s) のアドレスだけで、タイムアウトとサイズの上限付き）
 - 要約結果の DynamoDB への書き戻し（summary, detail, summary_status）
@@ -12,10 +12,10 @@ Whats New Summary Notifier は、AWS What's New などの Web 記事の RSS フ�
 - 要約言語・ペルソナのカスタマイズ（cdk.json の summarizers で設定）
 - モデルフォールバック: 複数モデル ID を順に試行し、失敗時は次のモデルへ自動切替
 - 失敗の扱い: `summary_status` は投稿のあとに `completed`、絞り込みで外すと `filtered`、再試行しても直らない失敗（本文も RSS の説明文も無い、Webhook の 4xx、Bedrock の権限なしなど）は `failed` と `failure_reason`。投稿の前の一時的な失敗（Bedrock のスロットリングと 5xx、Webhook の 429 と 5xx、接続できない、タイムアウト）だけを例外にし、イベントソースが 2 回まで再試行する（記録の最大の古さ 6 時間）。それでも失敗した記録はメタデータが SQS の失敗キュー（14 日保持）に入る。Webhook に要求を送ったあとの失敗は 2 回投稿しないよう再試行しない。Webhook の投稿は 10 秒でタイムアウト
-- イベントソースのフィルタで INSERT だけを通知 Lambda に渡し、クローラーは「まだ無いときだけ」書く（既存の記事の要約と summary_status を上書きしない）。CloudWatch アラーム 2 つ（IteratorAge が 30 分超、失敗キューにメッセージ）は通知先なし（使う人が CloudWatch で足す）
+- イベントソースのフィルタで INSERT だけを通知 Lambda に渡し、クローラーは「まだ無いときだけ」書く（既存の記事の要約と summary_status を上書きしない）。CloudWatch アラーム 2 つ（IteratorAge が 30 分超、失敗キューにメッセージ）。通知先は任意の `alarms`（`email` ならスタックが TLS 必須・保存時暗号化なしの SNS トピックとメール購読を作る、`topicArn` なら既存トピック）で、全アラームに ALARM と OK のアクションを付ける。書かなければアクションなし
 - マルチテナントデプロイ: `--tenant` で完全分離されたスタックを複数展開可能
-- deploy.sh による CloudShell ワンクリックデプロイ（CodeBuild 経由）。`--destroy` のあとも DynamoDB テーブル、ロググループ、CDKToolkit とその資産バケットは残る（DEPLOY.md の Destroy の節）。待ちの途中で止まったら同じコマンドを再実行すると片付けまで進む
-- ローカル Management Console（React + Express）でスタックの閲覧・デプロイ・更新・削除
+- deploy.sh による CloudShell ワンクリックデプロイ（CodeBuild 経由）。`--destroy` のあとも DynamoDB テーブル、ロググループ、CDKToolkit とその資産バケットは残る（DEPLOY.md の Destroy の節）。待ちの途中で止まったら同じコマンドを再実行すると片付けまで進む。アラームの通知先は `--alarm-email` / `--alarm-topic-arn` で `alarms` として渡す（更新のたびに付ける）
+- ローカル Management Console（React + Express）でスタックの閲覧・デプロイ・更新・削除。GUI の Alarm notifications で `alarms` を入力し、更新のときはスタックのテンプレートから今の設定を読み戻す
 
 ## アーキテクチャ
 EventBridge → Lambda (rss-crawler) → DynamoDB → DynamoDB Streams → Lambda (notify-to-app) → Bedrock (フォールバック付き) → DynamoDB 書き戻し + Webhook (Slack/Teams/Google Chat)
