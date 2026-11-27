@@ -221,6 +221,30 @@ describe('WhatsNewSummaryNotifierStack', () => {
     }
   });
 
+  test('each function writes to its own stack-owned log group kept for 14 days', () => {
+    const template = createStack();
+    // No LogRetention custom resource and no provider function for it
+    template.resourceCountIs('Custom::LogRetention', 0);
+    template.resourceCountIs('AWS::Lambda::Function', 2);
+    const logGroups = template.findResources('AWS::Logs::LogGroup');
+    expect(Object.keys(logGroups)).toHaveLength(2);
+    for (const lg of Object.values(logGroups) as {
+      Properties: Record<string, unknown>;
+      DeletionPolicy?: string;
+      UpdateReplacePolicy?: string;
+    }[]) {
+      expect(lg.Properties.RetentionInDays).toBe(14);
+      // CloudFormation names it, so it never collides with /aws/lambda/<function name>
+      expect(lg.Properties.LogGroupName).toBeUndefined();
+      expect(lg.DeletionPolicy).toBe('RetainExceptOnCreate');
+      expect(lg.UpdateReplacePolicy).toBe('Retain');
+    }
+    const targets = Object.values(template.findResources('AWS::Lambda::Function')).map(
+      (f) => (f as { Properties: { LoggingConfig?: { LogGroup?: { Ref?: string } } } }).Properties.LoggingConfig?.LogGroup?.Ref
+    );
+    expect(targets.sort()).toEqual(Object.keys(logGroups).sort());
+  });
+
   test('multiple notifiers create multiple EventBridge rules', () => {
     const template = createStack({
       notifiers: {
