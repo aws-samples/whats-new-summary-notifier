@@ -210,6 +210,7 @@ bash deploy.sh --destroy --tenant test  # 特定テナント
 | Lambda のロググループ（3 つ） | `/aws/lambda/<スタック名>-NotifyNewEntry...`、`-newsCrawler...`、`-LogRetention...` | 関数に `logRetention` を設定しているため、CDK はロググループをスタックの外で作ります。スタックと一緒には消えません |
 | CodeBuild のロググループ | `/aws/codebuild/whats-new-summary-notifier[-<テナント名>]` | CodeBuild が作ります。`deploy.sh` はプロジェクトを消しますが、ログは消しません |
 | CDKToolkit スタックとその資産バケット | `CDKToolkit`、`cdk-hnb659fds-assets-<アカウント ID>-<リージョン>` | `cdk bootstrap` が作り、同じアカウントとリージョンのすべての CDK アプリが共有します。CDKToolkit を削除してもバケットは残ります（`DELETE_SKIPPED`） |
+| Management Console のソースバケット（[Management Console](CONSOLE_ja.md) を使ったときだけ） | `wnsn-deploy-<アカウント ID>-<リージョン>-an` | 同じアカウントとリージョンでコンソールからデプロイしたすべてのテナントが共有します。コンソールのクリーンアップはこのバケットを消しません。`source/` 以下の zip はライフサイクルのルールで 7 日後に消えます。空のバケットには保存の料金がかかりません |
 
 `<スタック名>` は `WhatsNewSummaryNotifierStack`、テナントなら `WhatsNewSummaryNotifier-<テナント名>` です（ロググループの名前では長い名前が途中で切られます）。削除する場合は、destroy が終わってから次のように実行します。
 
@@ -222,6 +223,12 @@ aws dynamodb delete-table --table-name <テーブル名>
 aws logs describe-log-groups --log-group-name-prefix /aws/lambda/WhatsNewSummaryNotifier --query 'logGroups[].logGroupName'
 aws logs describe-log-groups --log-group-name-prefix /aws/codebuild/whats-new-summary-notifier --query 'logGroups[].logGroupName'
 aws logs delete-log-group --log-group-name <ロググループ名>
+
+# Management Console のソースバケット（このリージョンにコンソールでデプロイしたテナントが残っていないときだけ）
+aws codebuild list-projects --query "projects[?starts_with(@, 'whats-new-summary-notifier')]"
+aws s3api head-bucket --bucket wnsn-deploy-<アカウント ID>-<リージョン>-an --expected-bucket-owner <アカウント ID>
+aws s3 rm s3://wnsn-deploy-<アカウント ID>-<リージョン>-an/source/ --recursive
+aws s3api delete-bucket --bucket wnsn-deploy-<アカウント ID>-<リージョン>-an --expected-bucket-owner <アカウント ID>
 ```
 
-CDKToolkit は、同じアカウントとリージョンでほかの CDK アプリが使っていないときだけ削除してください。資産バケットはバージョニングが有効なので、オブジェクトのすべてのバージョンと削除マーカーを消してからバケットを削除します（S3 コンソールの「空にする」を使ってから削除するなど）。ほかのテナントやスタックのテーブルやロググループも同じ接頭辞に当たることがあるので、削除する前に名前を 1 つずつ確かめてください。
+CDKToolkit は、同じアカウントとリージョンでほかの CDK アプリが使っていないときだけ削除してください。資産バケットはバージョニングが有効なので、オブジェクトのすべてのバージョンと削除マーカーを消してからバケットを削除します（S3 コンソールの「空にする」を使ってから削除するなど）。コンソールのソースバケットは、自分でバージョニングを有効にしていなければバージョニングされていません。有効にしている場合は、期限切れの zip が古いバージョンとして残って料金がかかり続け、すべてのバージョンと削除マーカーを消してからでないとバケットを削除できません。ほかのテナントやスタックのテーブルやロググループも同じ接頭辞に当たることがあるので、削除する前に名前を 1 つずつ確かめてください。

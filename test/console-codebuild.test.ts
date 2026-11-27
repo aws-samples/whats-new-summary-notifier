@@ -28,7 +28,7 @@ describe('Console ensureCodeBuildProject', () => {
       source: { type: 'S3', location: 'bucket/source/2.zip' },
       environment: created.environment,
     });
-    expect(api.updateProject.mock.calls[0][0].environment.image).toBe('aws/codebuild/amazonlinux-x86_64-standard:6.0');
+    expect(api.updateProject.mock.calls[0][0].environment.image).toBe(CODEBUILD_IMAGE);
   });
 
   test('rethrows other errors without updating', async () => {

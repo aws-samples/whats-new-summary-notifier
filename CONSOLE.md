@@ -67,7 +67,7 @@ Click **🔄 Update** on a stack row. The modal pre-fills with the current confi
 
 ### 5. Destroy Tenant
 
-Click **🗑️ Destroy** on a stack row. A confirmation dialog requires you to type the tenant name exactly. After the destroy build succeeds, the CodeBuild project, IAM role, and SSM parameter are automatically cleaned up. The stack's DynamoDB table and log groups, the CodeBuild log group and CDKToolkit stay; see [What remains after destroy](DEPLOY.md#what-remains-after-destroy).
+Click **🗑️ Destroy** on a stack row. A confirmation dialog requires you to type the tenant name exactly. After the destroy build succeeds, the CodeBuild project, IAM role, and SSM parameter are automatically cleaned up. The stack's DynamoDB table and log groups, the CodeBuild log group, CDKToolkit and the console's [source bucket](#source-bucket) stay; see [What remains after destroy](DEPLOY.md#what-remains-after-destroy).
 
 ### 6. Build Console
 

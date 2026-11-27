@@ -210,6 +210,7 @@ Deleting the stack does not delete everything. These resources stay in the accou
 | Lambda log groups (3) | `/aws/lambda/<stack name>-NotifyNewEntry...`, `-newsCrawler...`, `-LogRetention...` | The functions set `logRetention`; CDK creates these log groups outside the stack, so they are not deleted with it |
 | CodeBuild log group | `/aws/codebuild/whats-new-summary-notifier[-<tenant>]` | CodeBuild creates it; `deploy.sh` deletes the project but not its logs |
 | CDKToolkit stack and its assets bucket | `CDKToolkit`, `cdk-hnb659fds-assets-<account>-<region>` | Created by `cdk bootstrap` and shared by every CDK app in the account and Region. Deleting CDKToolkit also keeps the bucket (`DELETE_SKIPPED`) |
+| Management Console source bucket (only when you used the [Management Console](CONSOLE.md)) | `wnsn-deploy-<account>-<region>-an` | Shared by every tenant the console deployed in the account and Region. The console's cleanup does not delete it; source zips under `source/` are deleted after 7 days by its lifecycle rule. An empty bucket has no storage charge |
 
 `<stack name>` is `WhatsNewSummaryNotifierStack`, or `WhatsNewSummaryNotifier-<tenant>` for a tenant (long names are shortened in the log group names). To remove them, after the destroy has finished:
 
@@ -222,6 +223,12 @@ aws dynamodb delete-table --table-name <table name>
 aws logs describe-log-groups --log-group-name-prefix /aws/lambda/WhatsNewSummaryNotifier --query 'logGroups[].logGroupName'
 aws logs describe-log-groups --log-group-name-prefix /aws/codebuild/whats-new-summary-notifier --query 'logGroups[].logGroupName'
 aws logs delete-log-group --log-group-name <log group name>
+
+# Management Console source bucket: only when no tenant in this Region was deployed with the console
+aws codebuild list-projects --query "projects[?starts_with(@, 'whats-new-summary-notifier')]"
+aws s3api head-bucket --bucket wnsn-deploy-<account>-<region>-an --expected-bucket-owner <account>
+aws s3 rm s3://wnsn-deploy-<account>-<region>-an/source/ --recursive
+aws s3api delete-bucket --bucket wnsn-deploy-<account>-<region>-an --expected-bucket-owner <account>
 ```
 
-Delete CDKToolkit only when no other CDK app in the account and Region uses it. The assets bucket is versioned, so delete every object version and delete marker before you delete the bucket (for example, empty it in the S3 console, then delete it). The tables and log groups of other tenants and other stacks may match the same prefixes, so check each name before you delete it.
+Delete CDKToolkit only when no other CDK app in the account and Region uses it. The assets bucket is versioned, so delete every object version and delete marker before you delete the bucket (for example, empty it in the S3 console, then delete it). The console's source bucket is not versioned unless you turned versioning on; if you did, its expired zips stay as noncurrent versions (which are charged), and you must delete every version and delete marker before you can delete the bucket. The tables and log groups of other tenants and other stacks may match the same prefixes, so check each name before you delete it.
