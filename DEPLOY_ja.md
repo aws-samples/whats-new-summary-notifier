@@ -35,6 +35,8 @@ bash deploy.sh
 
 対話ウィザードが通知先、言語、Webhook URL を順に質問します。デプロイは AWS CodeBuild 経由で実行されるため、Docker や Node.js のセットアップは自動で行われます。
 
+スタックが自分でロググループを作るようになる前にデプロイしたスタックを更新すると、Lambda のログの書き込み先が、スタック名で始まる新しい 2 つのロググループに変わります（[Lambda のログ](#lambda-のログ)）。古い `/aws/lambda/...` のロググループは残りますが、新しいイベントは入らず、中のイベントは 14 日で消えます。古いロググループに付けたメトリクスフィルタ、サブスクリプションフィルタ、Logs Insights の保存クエリは新しいログに当たらなくなるので、新しいロググループに付け直してください。
+
 #### 非対話モード
 
 ```bash
@@ -185,7 +187,39 @@ cdk deploy
 
 それ以外の失敗（要約する文が無い、Webhook の 4xx、モデルを使う権限が無い）は、DynamoDB の項目に `summary_status` = `failed` と `failure_reason` を書き、再試行しません。Webhook に要求を送ったのに 10 秒以内に答えが返らなかったときも、すでに投稿されているかもしれないので `failed` にします。再試行で同じ記事を 2 回投稿することはありません。
 
-再試行しても失敗したときは、失敗したストリームの記録についてのメッセージ（記事そのものは含まない）を名前に `NotifyFailureQueue` を含む SQS キューに送ります。キューはメッセージを 14 日間保持します。スタックは通知先の無い CloudWatch アラームを 2 つ作ります。1 つはこのキューにメッセージがあるとき、もう 1 つは通知 Lambda がストリームから 30 分を超えて遅れたとき（`IteratorAge`）に鳴ります。知らせてほしいときは、CloudWatch でアラームに SNS トピックなどのアクションを足してください。投稿されなかった記事は、`summary_status` が `failed` の項目と、`filter_result` の無い項目のうち `summary_status` が無いものです。
+再試行しても失敗したときは、失敗したストリームの記録についてのメッセージ（記事そのものは含まない）を名前に `NotifyFailureQueue` を含む SQS キューに送ります。キューはメッセージを 14 日間保持します。スタックは CloudWatch アラームを 2 つ作ります。1 つはこのキューにメッセージがあるとき、もう 1 つは通知 Lambda がストリームから 30 分を超えて遅れたとき（`IteratorAge`）に鳴ります。`alarms` を設定しない限り、アラームにアクションはありません（「アラームの通知」を参照）。投稿されなかった記事は、`summary_status` が `failed` の項目と、`filter_result` の無い項目のうち `summary_status` が無いものです。
+
+### アラームの通知（オプション）
+`alarms` を書かなければ、スタックの CloudWatch アラームにアクションは無く、ALARM になっても誰にも知らされません。`cdk.json`（またはテナントの設定ファイル）に `alarms` を足すと、スタックのどのアラームが ALARM になったときも、OK に戻ったときも、メールか自分の SNS トピックに知らせます。
+
+```json
+"alarms": { "email": "ops@example.com" }
+```
+
+```json
+"alarms": { "topicArn": "arn:aws:sns:us-east-1:<アカウント ID>:my-alarm-topic" }
+```
+
+| キー | 説明 |
+|---|---|
+| `email` | スタックが SNS トピックと、そのトピックへのメールの購読を作ります。トピックは TLS での要求だけを受け付け、このアカウントの CloudWatch アラームだけが発行できます。保存時の暗号化はしません。CloudWatch アラームは AWS 管理キー `alias/aws/sns` で暗号化したトピックに発行できず、通知の中身はアラーム名、状態、しきい値だけです |
+| `topicArn` | スタックと同じリージョンにある既存の SNS 標準トピック（Amazon Q Developer in chat applications で Slack に流すトピックなど）。スタックはアラームのアクションに足すだけで、トピックとそのポリシーは変えないので、トピックポリシーで `cloudwatch.amazonaws.com` に発行を許してください。カスタマー管理キーで暗号化したトピックはこちらを使います。キーポリシーで `cloudwatch.amazonaws.com` に `kms:Decrypt` と `kms:GenerateDataKey*` も許してください |
+
+どちらか 1 つだけを書きます。値の形が違うとき、トピックが別のリージョンにあるときは、`cdk synth` がメッセージを出して止まります。`alarms` が効くのは自分で `cdk deploy` を実行したときで、`deploy.sh` と Management Console はこの値を渡しません。
+
+- **購読を確認する。** デプロイのあと、SNS がそのアドレスに確認のメールを送ります。メールのリンクを押すまで何も届きません（迷惑メールのフォルダも見てください）。48 時間以内に確認されない購読は SNS が消します。同じアドレスのまま再デプロイしても、スタックの購読のリソースは変わらないので確認のメールは送り直されません。`email` を一度別の値にして（または消して）デプロイし、戻してもう一度デプロイするか、SNS のコンソールで同じアドレスを購読し直してください（その購読はスタックの外のものになります）。
+- **試す。** 確認のあと、`aws cloudwatch set-alarm-state --alarm-name <アラーム名> --state-value ALARM --state-reason test` で通知が 1 通届きます。アラームは次の評価で本来の状態に戻ります。
+- **手で付けたアクション。** `alarms` を書かなければ、更新で既存のアラームは変わらないので、CloudWatch のコンソールで手で付けたアクションは残ります。`alarms` を書くと、CloudFormation がアラームをスタックのアクションだけで書き直すので、手で付けたアクションは消えます。そのトピックを `topicArn` に書いてください。
+- **公開した fork にメールアドレスをコミットしない。** `alarms` はコミットしないテナントの設定ファイルに書くか（`cdk deploy -c config=tenants/myteam.json`）、コマンドラインで渡してください（`cdk deploy -c alarms='{"email":"ops@example.com"}'`）。
+
+### Lambda のログ
+それぞれの Lambda 関数は、スタックが作るロググループに書き込みます。保持期間は 14 日です。名前は CloudFormation が付け、通知の Lambda は `<スタック名>-NotifyNewEntryLogGroup...`、クローラーは `<スタック名>-NewsCrawlerLogGroup...` です。次のように探せます。
+
+```bash
+aws logs describe-log-groups --log-group-name-prefix WhatsNewSummaryNotifier --query 'logGroups[].logGroupName'
+```
+
+以前のバージョンから更新して 14 日の間は、それより前のイベントが `/aws/lambda/<スタック名>-NotifyNewEntry...` と `/aws/lambda/<スタック名>-newsCrawler...` に残っています。更新の前後をまとめて調べるときは、Logs Insights で両方のロググループを選んでください。
 
 ## スタックの削除
 
@@ -207,7 +241,8 @@ bash deploy.sh --destroy --tenant test  # 特定テナント
 | リソース | 名前 | 残る理由 |
 |---|---|---|
 | DynamoDB テーブル（RSS の履歴） | `<スタック名>-WhatsNewRSSHistory...` | テーブルは CDK の既定の削除ポリシー `RETAIN` のままなので、CloudFormation が削除を飛ばします（`DELETE_SKIPPED`） |
-| Lambda のロググループ（3 つ） | `/aws/lambda/<スタック名>-NotifyNewEntry...`、`-newsCrawler...`、`-LogRetention...` | 関数に `logRetention` を設定しているため、CDK はロググループをスタックの外で作ります。スタックと一緒には消えません |
+| Lambda のロググループ（2 つ） | `<スタック名>-NotifyNewEntryLogGroup...`、`<スタック名>-NewsCrawlerLogGroup...` | 削除ポリシーで、スタックを削除してもログを残します（`DELETE_SKIPPED`） |
+| 古い Lambda のロググループ（3 つ。スタックが自分でロググループを作るようになる前に最初にデプロイしたスタックだけ） | `/aws/lambda/<スタック名>-NotifyNewEntry...`、`-newsCrawler...`、`-LogRetention...` | 以前の `logRetention` の設定がスタックの外で作ったものです |
 | CodeBuild のロググループ | `/aws/codebuild/whats-new-summary-notifier[-<テナント名>]` | CodeBuild が作ります。`deploy.sh` はプロジェクトを消しますが、ログは消しません |
 | CDKToolkit スタックとその資産バケット | `CDKToolkit`、`cdk-hnb659fds-assets-<アカウント ID>-<リージョン>` | `cdk bootstrap` が作り、同じアカウントとリージョンのすべての CDK アプリが共有します。CDKToolkit を削除してもバケットは残ります（`DELETE_SKIPPED`） |
 
@@ -219,6 +254,7 @@ aws dynamodb list-tables --query "TableNames[?contains(@, 'WhatsNewRSSHistory')]
 aws dynamodb delete-table --table-name <テーブル名>
 
 # ロググループ
+aws logs describe-log-groups --log-group-name-prefix WhatsNewSummaryNotifier --query 'logGroups[].logGroupName'
 aws logs describe-log-groups --log-group-name-prefix /aws/lambda/WhatsNewSummaryNotifier --query 'logGroups[].logGroupName'
 aws logs describe-log-groups --log-group-name-prefix /aws/codebuild/whats-new-summary-notifier --query 'logGroups[].logGroupName'
 aws logs delete-log-group --log-group-name <ロググループ名>
