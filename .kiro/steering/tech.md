@@ -13,7 +13,9 @@
 - Amazon Bedrock（モデルフォールバックプール — `modelIds` 配列で複数指定）
 - Amazon DynamoDB（RSS 履歴 + 要約結果の書き戻し、Streams で変更検知）
 - Amazon SQS（通知 Lambda のイベントソースの失敗の送り先）
-- Amazon CloudWatch（IteratorAge と失敗キューのアラーム）
+- Amazon CloudWatch（IteratorAge と失敗キューのアラーム、Lambda ごとのロググループ。ロググループはスタックが作り、名前は CloudFormation が付け、保持期間 14 日、削除ポリシー RETAIN_ON_UPDATE_OR_DELETE）
+- Amazon CloudWatch のカスタムメトリクス（通知 Lambda の EMF の行から、`WhatsNewSummaryNotifier` 名前空間に Notified / Filtered / Failed / RelevanceFailOpen / ModelFallback / DescriptionFallback、次元は FunctionName だけ。EMF の行は print のまま。Failed と、topics があるときの RelevanceFailOpen にアラーム）
+- Amazon SNS（任意。`alarms.email` のときアラームの通知用トピックとメール購読）
 - Amazon EventBridge（定期スケジュール）
 - AWS Lambda（RSS クロール、通知処理）
 - AWS Systems Manager Parameter Store（Webhook URL の安全な格納）

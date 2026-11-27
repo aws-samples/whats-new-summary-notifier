@@ -12,6 +12,7 @@ import {
   ListStacksCommand,
   DescribeStacksCommand,
   ListStackResourcesCommand,
+  GetTemplateCommand,
 } from '@aws-sdk/client-cloudformation';
 import {
   DynamoDBClient,
@@ -50,6 +51,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { execSync } from 'child_process';
 import { CODEBUILD_IMAGE, ensureCodeBuildProject as ensureProject } from './codebuild';
+import { alarmsFromTemplate, type AlarmSettings } from './alarms';
 
 const API_PORT = 3456;
 const UI_PORT = 5173;
@@ -185,6 +187,12 @@ app.get('/api/stacks', async (req, res) => {
             }
           } catch { /* ignore */ }
 
+          let alarms: AlarmSettings = {};
+          try {
+            const { TemplateBody } = await cf.send(new GetTemplateCommand({ StackName: s.StackName }));
+            alarms = alarmsFromTemplate(TemplateBody);
+          } catch { /* ignore */ }
+
           const tenant =
             s.StackName === 'WhatsNewSummaryNotifierStack'
               ? '(default)'
@@ -201,6 +209,7 @@ app.get('/api/stacks', async (req, res) => {
             outputs: stack?.Outputs ?? [],
             tags: stack?.Tags ?? [],
             envVars,
+            alarms,
           });
         }
       } catch { /* skip */ }
@@ -453,7 +462,9 @@ app.post('/api/deploy', async (req, res) => {
     await ensureCodeBuildProject(cb, cbProjectName, roleArn, bucket, key);
 
     // 4. Start build
-    const ctx = cdkContext ?? buildDefaultConfig(destination, language, ssmParamName);
+    // A context edited in the GUI may hold only some keys (for example only alarms); the form
+    // still decides the notifier, as it does when no context is sent
+    const ctx = { ...buildDefaultConfig(destination, language, ssmParamName), ...(cdkContext ?? {}) };
     const { build } = await cb.send(new StartBuildCommand({
       projectName: cbProjectName,
       environmentVariablesOverride: [
@@ -494,7 +505,9 @@ app.post('/api/deploy/update', async (req, res) => {
     const cb = new CodeBuildClient({ region: targetRegion, credentials });
     await ensureCodeBuildProject(cb, cbProjectName, roleArn, bucket, key);
 
-    const ctx = cdkContext ?? buildDefaultConfig(destination, language, ssmParamName);
+    // A context edited in the GUI may hold only some keys (for example only alarms); the form
+    // still decides the notifier, as it does when no context is sent
+    const ctx = { ...buildDefaultConfig(destination, language, ssmParamName), ...(cdkContext ?? {}) };
     const { build } = await cb.send(new StartBuildCommand({
       projectName: cbProjectName,
       environmentVariablesOverride: [
